@@ -1,0 +1,452 @@
+Here is Claude's plan:                                                                             
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Auth: Login + Multi-step Registration                                                              
+                                                                                                    
+ Context                                                                                            
+
+ The Quant Learning OS app currently has no authentication. All pages are accessible without
+ logging in and profile data is static mock. The user wants a login page and a multi-step
+ registration wizard that captures profile details (identity, career intent, aspirations). Auth
+ state should persist in localStorage and all app routes should be gated behind login.
+
+ Approach
+
+ Auth storage
+
+ Mock auth in localStorage under key qlos_user. No backend. Login checks stored credentials.
+ Register writes new user.
+
+ Route guarding
+
+ Modify DashboardShell (already used in root layout for all routes) to:
+ - Read auth state from context
+ - Redirect unauthenticated users to /login
+ - Redirect authenticated users away from /login and /register
+ - Render a minimal centered layout for auth pages (no sidebar/topbar)
+
+ This avoids moving existing page files (no route group refactor needed).
+
+ ---
+ Files to create
+
+ 1. contexts/AuthContext.tsx
+
+ - AuthUser type: { name, email, avatar, school, graduationTimeline, location, timezone, tracks,
+ targetRole, targetTimeline, targetFirms, preferLowLatency, preferResearchHeavy,
+ preferDiscretionary, learningStyle, hoursPerWeek, availableDays, password }
+ - useAuth() hook with user, isLoading, login(), register(), logout()
+ - Persists to localStorage key qlos_user
+ - login(): finds matching email+password in localStorage, returns { success, error }
+ - register(): saves new user, auto-logs in, returns { success, error }
+ - logout(): clears user from context + localStorage
+
+ 2. app/login/page.tsx
+
+ - "use client" client component
+ - Centered card layout: "Q" logo, app name, tagline
+ - Fields: Email, Password
+ - "Sign in" button with loading state
+ - Error alert on invalid credentials
+ - Link to /register
+ - Demo hint: pre-filled email/password for quick demo (alex.chen@quant.dev / demo1234)
+
+ 3. app/register/page.tsx
+
+ - "use client" client component
+ - 4-step wizard with progress bar + step label
+ - Uses RegisterWizard component
+ - On completion: calls register(), redirects to /
+ - Link back to /login
+
+ 4. components/auth/RegisterWizard.tsx
+
+ Step 1 — Account
+ - Email (Input), Password (Input, type=password), Confirm Password
+ - Validation: email format, password ≥8 chars, passwords match
+
+ Step 2 — Identity
+ - Full name, School, Graduation timeline (Select), Location, Timezone (Select)
+ - Track preferences: toggleable badge chips (Interview Prep / Research Track / Trading Track)
+
+ Step 3 — Career Intent
+ - Target role (Select: Quant Research / Quant Trading / Quant Dev / Data Science / Risk / SWE)
+ - Target timeline (Select)
+ - Target firms (tag input with add/remove)
+ - Preference checkboxes (research-heavy, low-latency, discretionary)
+
+ Step 4 — Aspirations (optional but encouraged)
+ - Learning style (Select: drills / projects / theory-first / mixed)
+ - Hours/week (Select)
+ - Available days (checkbox grid Mon–Sun)
+ - North Star (Textarea, optional)
+
+ Navigation: Back button (disabled on step 1), Next/Create Account button, step indicator 1 of 4
+
+ ---
+ Files to modify
+
+ 5. app/layout.tsx
+
+ - Import and wrap with AuthProvider from contexts/AuthContext.tsx
+ - AuthProvider goes inside ThemeProvider, wrapping DashboardShell
+
+ 6. components/dashboard-shell.tsx
+
+ - Add "use client" (already has it)
+ - Import useAuth and usePathname, useRouter
+ - Add auth guard logic:
+ const AUTH_ROUTES = ["/login", "/register"]
+ if (!user && !isAuthPage) → router.replace("/login")
+ if (user && isAuthPage) → router.replace("/")
+ - If isAuthPage: render <div className="min-h-screen flex items-center justify-center
+ bg-background">{children}</div>
+ - Show loading spinner while isLoading is true (avoids flash)
+
+ ---
+ Auth types to add to lib/types.ts
+
+ export interface AuthUser {
+   name: string
+   email: string
+   password: string   // plaintext mock — no real security needed
+   avatar: string     // derived from initials
+   school: string
+   graduationTimeline: string
+   location: string
+   timezone: string
+   tracks: TrackBadge[]
+   targetRole: TargetRole
+   targetTimeline: TargetTimeline
+   targetFirms: string[]
+   preferResearchHeavy: boolean
+   preferLowLatency: boolean
+   preferDiscretionary: boolean
+   learningStyle: LearningStylePref
+   hoursPerWeek: number
+   availableDays: string[]
+   northStar: string
+ }
+
+ ---
+ UX details
+
+ Login page: Minimal — "Q" logo mark, app name, 2 inputs, sign-in button. Small demo hint below
+ form. Link to register.
+
+ Register wizard: Step indicator at top (dots or "Step 2 of 4"). Card layout. Left: step content.
+ Form fields use same density as profile page. Final step button says "Create account". On loading,
+  button shows spinner.
+
+ Auth guard flash prevention: isLoading state in AuthContext initializes true while reading
+ localStorage. DashboardShell renders nothing (or a skeleton) while loading. This prevents showing
+ dashboard briefly before redirect.
+
+ ---
+ Verification
+
+ 1. npm run dev in deep-learning-week directory
+ 2. Navigate to http://localhost:3000 → should redirect to /login
+ 3. Click "Create account" → complete 4-step wizard → lands on dashboard
+ 4. Refresh → stays logged in (localStorage)
+ 5. Click logout (top-bar user dropdown) → redirected to /login
+ 6. Demo login with pre-filled credentials
+ 7. Profile page shows data from registration
+
+  ---                                                                                               
+  Alpaca integration complete                                                                       
+                                                                                                    
+  Setup required                                                                                    
+                                                                                                    
+  Copy .env.local.example → .env.local and add your paper trading keys:                             
+                                                                                                    
+  ALPACA_API_KEY=your_paper_api_key_here
+  ALPACA_SECRET_KEY=your_paper_secret_key_here                                                      
+                                                                                                    
+  Get them from app.alpaca.markets → Paper Trading → API Keys.                                      
+                                                                                                    
+  ---
+  What was built
+
+  lib/alpaca.ts — Server-side Alpaca client. Never imported on the client. Contains typed helpers
+  for every API call (submitOrder, getOrders, getPositions, getBars, getAccount) and all Alpaca
+  response types (AlpacaOrder, AlpacaPosition, AlpacaAccount, AlpacaBar).
+
+  5 API routes (all proxy to paper-api.alpaca.markets, keeping keys server-side):
+
+  ┌──────────────────────────────┬──────────┬────────────────────────────────┐
+  │            Route             │ Methods  │            Purpose             │
+  ├──────────────────────────────┼──────────┼────────────────────────────────┤
+  │ /api/alpaca/orders           │ GET POST │ List orders / submit new order │
+  ├──────────────────────────────┼──────────┼────────────────────────────────┤
+  │ /api/alpaca/orders/[orderId] │ DELETE   │ Cancel an open order           │
+  ├──────────────────────────────┼──────────┼────────────────────────────────┤
+  │ /api/alpaca/positions        │ GET      │ Live open positions            │
+  ├──────────────────────────────┼──────────┼────────────────────────────────┤
+  │ /api/alpaca/account          │ GET      │ Buying power & account status  │
+  ├──────────────────────────────┼──────────┼────────────────────────────────┤
+  │ /api/alpaca/bars/[symbol]    │ GET      │ OHLC bars for chart (IEX feed) │
+  └──────────────────────────────┴──────────┴────────────────────────────────┘
+
+  Updated app/trade/sim/page.tsx:
+  - Chart now shows real IEX bars from Alpaca, refreshed on symbol/timeframe change
+  - Buying power shown in top bar from live account data
+  - Place Order hits POST /api/alpaca/orders — sends a real paper order
+  - Positions and orders tables show live Alpaca data, auto-polled every 4s while session is active
+  - Cancel button on pending orders calls DELETE /api/alpaca/orders/[id]
+  - End Session cancels all open orders before closing
+  - Clear error banner if .env.local is missing
+  - Inline success/error feedback on order submission
+  - Refresh button to manually re-fetch all data
+
+
+  ⏺ positions comes from getPositions() in lib/alpaca.ts. Here's the full call chain:                 
+                                                                                                    
+  Browser calls GET /api/alpaca/positions                                                           
+    → route.ts: getPositions()                              
+      → lib/alpaca.ts: alpacaFetch("/v2/positions")                                                 
+        → fetch("https://paper-api.alpaca.markets/v2/positions", {                                  
+             headers: { "APCA-API-KEY-ID": ..., "APCA-API-SECRET-KEY": ... }                        
+           })                                                                                       
+          → Alpaca returns JSON array of positions          
+        ← body parsed with JSON.parse(), typed as AlpacaPosition[]
+      ← returned to route
+    ← NextResponse.json(positions) serialises it back to the browser
+
+  The key pieces in lib/alpaca.ts:
+
+  // getPositions() just calls alpacaFetch with the right path
+  export async function getPositions() {
+    return alpacaFetch<AlpacaPosition[]>("/v2/positions")
+  }
+
+  // alpacaFetch attaches the API keys (from .env.local) and hits Alpaca
+  export async function alpacaFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+    const base = path.startsWith("/v2/stocks") ? DATA_URL : BASE_URL   // paper-api.alpaca.markets
+    const res = await fetch(`${base}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ... },   // injects ALPACA_API_KEY / ALPACA_SECRET_KEY
+      cache: "no-store",
+    })
+    const body = await res.text()
+    return JSON.parse(body) as T            // ← this is what becomes `positions`
+  }
+
+  So positions is just the parsed JSON that Alpaca sent back — an array like:
+
+  [
+    {
+      "symbol": "SPY",
+      "qty": "10",
+      "side": "long",
+      "avg_entry_price": "521.50",
+      "current_price": "523.10",
+      "unrealized_pl": "16.00",
+      ...
+    }
+  ]
+
+  The route acts purely as a proxy — it exists only to keep the API keys on the server rather than
+  exposing them to the browser.
+
+  ⏺ Take GET /api/alpaca/bars/SPY?timeframe=5m as the example.                                        
+                                                                                                   
+  Step 1 — the fetch call in the sim page                                                           
+  // app/trade/sim/page.tsx                                                                         
+  const res = await fetch(`/api/alpaca/bars/${symbol}?timeframe=${timeframe}&limit=100`)            
+  //                       ^^^^^^^^^^^^^^^^^^^^^^^^^                                                
+  //                       symbol = "SPY", timeframe = "5m"                                         
+  //                                                        
+  // Resulting URL: /api/alpaca/bars/SPY?timeframe=5m&limit=100
+
+  Step 2 — Next.js matches the URL to a file
+  /api/alpaca/bars/SPY
+   │    │      │    └── captured as params.symbol = "SPY"
+   │    │      └── app/api/alpaca/bars/[symbol]/route.ts
+   │    └── app/api/alpaca/
+   └── app/api/
+
+  Step 3 — the route handler runs and reads the param + query
+  // app/api/alpaca/bars/[symbol]/route.ts
+  const { symbol } = await params          // "SPY"
+  const clientTf = searchParams.get("timeframe")  // "5m"
+  const alpacaTf = TIMEFRAME_MAP[clientTf]        // "5Min"
+  const limit = parseInt(searchParams.get("limit")) // 100
+
+  Step 4 — getBars() builds the Alpaca URL
+  // lib/alpaca.ts
+  export async function getBars(symbol, timeframe, limit) {
+    return
+  alpacaFetch(`/v2/stocks/${symbol}/bars?timeframe=${timeframe}&limit=${limit}&feed=iex&sort=asc`)
+    //                              ^^^                     ^^^^^^^^^^          ^^^
+    //                             "SPY"                    "5Min"              100
+    //
+    // Path: /v2/stocks/SPY/bars?timeframe=5Min&limit=100&feed=iex&sort=asc
+  }
+
+  Step 5 — alpacaFetch prepends the base URL and attaches the API keys
+  const base = DATA_URL  // "https://data.alpaca.markets"
+  //           ^^^ chosen because path starts with "/v2/stocks"
+
+  fetch("https://data.alpaca.markets/v2/stocks/SPY/bars?timeframe=5Min&limit=100&feed=iex&sort=asc",
+   {
+    headers: {
+      "APCA-API-KEY-ID":     "PKZ7...",   // from .env.local
+      "APCA-API-SECRET-KEY": "5N3G...",   // from .env.local
+    }
+  })
+
+  Step 6 — response flows back
+  Alpaca → JSON array of bars
+         → alpacaFetch parses + returns it
+         → route.ts: NextResponse.json(data)
+         → browser: res.json() → setBars(points)
+         → chart renders
+
+  The full URL that actually hits Alpaca:
+  https://data.alpaca.markets/v2/stocks/SPY/bars?timeframe=5Min&limit=100&feed=iex&sort=asc
+
+
+  ❯ how about positions                                                                               
+                                                                                                   
+⏺ Same chain, but simpler — no dynamic segment, different base URL.                                 
+                                                                                                   
+  Step 1 — fetch in the sim page                                                                    
+  // app/trade/sim/page.tsx                                                                         
+  const res = await fetch("/api/alpaca/positions")                                                  
+                                                                                                    
+  Step 2 — Next.js matches to the file                                                              
+  /api/alpaca/positions                                     
+   └── app/api/alpaca/positions/route.ts   (no [param] needed)
+
+  Step 3 — route handler calls getPositions()
+  // app/api/alpaca/positions/route.ts
+  const positions = await getPositions()
+
+  Step 4 — getPositions() calls alpacaFetch
+  // lib/alpaca.ts
+  export async function getPositions() {
+    return alpacaFetch<AlpacaPosition[]>("/v2/positions")
+  }
+
+  Step 5 — alpacaFetch picks the base URL
+  const base = path.startsWith("/v2/stocks") ? DATA_URL : BASE_URL
+  //                           "/v2/positions" doesn't start with "/v2/stocks"
+  //                           so BASE_URL = "https://paper-api.alpaca.markets"
+
+  fetch("https://paper-api.alpaca.markets/v2/positions", {
+    headers: {
+      "APCA-API-KEY-ID":     "PKZ7...",
+      "APCA-API-SECRET-KEY": "5N3G...",
+    }
+  })
+
+  The only difference from bars is which Alpaca host gets used:
+
+  ┌─────────────────────────┬──────────────────────────┬─────────────────────────┐
+  │                         │        Positions         │          Bars           │
+  ├─────────────────────────┼──────────────────────────┼─────────────────────────┤
+  │ Path                    │ /v2/positions            │ /v2/stocks/SPY/bars?... │
+  ├─────────────────────────┼──────────────────────────┼─────────────────────────┤
+  │ Starts with /v2/stocks? │ No                       │ Yes                     │
+  ├─────────────────────────┼──────────────────────────┼─────────────────────────┤
+  │ Base URL                │ paper-api.alpaca.markets │ data.alpaca.markets     │
+  └─────────────────────────┴──────────────────────────┴─────────────────────────┘
+
+  Alpaca splits trading operations (orders, positions, account) onto paper-api and market data
+  (bars, quotes) onto data — that one startsWith check is what routes to the right host.
+
+
+
+⏺ The fetch here is just the built-in browser/Node fetch — the same one you'd use anywhere in
+  JavaScript. It's not imported from anywhere.                                                     
+                                    
+  // lib/alpaca.ts
+  export async function alpacaFetch<T = unknown>(                                                   
+    path: string,
+    init?: RequestInit,                                                                             
+  ): Promise<T> {                                           
+    const base = path.startsWith("/v2/stocks") ? DATA_URL : BASE_URL
+    const res = await fetch(`${base}${path}`, {   // ← plain global fetch()
+      ...init,
+      headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+      cache: "no-store",
+    })
+    ...
+  }
+
+  When this runs in a Next.js API route (which is Node.js on the server), fetch is the global fetch
+  that Node has built in since v18. There's no import fetch from "..." needed.
+
+  The string passed to it is just template literal concatenation:
+
+  `${base}${path}`
+
+   base = "https://paper-api.alpaca.markets"
+   path = "/v2/positions"
+                    ↓
+  "https://paper-api.alpaca.markets/v2/positions"
+
+
+⏺ Breaking it down piece by piece:
+                                                                                                   
+  The function signature            
+  export async function alpacaFetch<T = unknown>(
+    path: string,                                                                                   
+    init?: RequestInit,
+  ): Promise<T>                                                                                     
+  - <T = unknown> — generic type, caller says what shape the response will be. getPositions() passes
+   AlpacaPosition[], so T becomes that
+  - init? — optional, same options object that native fetch accepts (method, body, etc.). The ?
+  means you can omit it
+  - Promise<T> — it's async so it always returns a Promise, which resolves to whatever T is
+
+  ---
+  Picking the base URL
+  const base = path.startsWith("/v2/stocks") ? DATA_URL : BASE_URL
+  Ternary — if the path begins with /v2/stocks, use data.alpaca.markets, otherwise use
+  paper-api.alpaca.markets. Just a string assigned to base.
+
+  ---
+  The fetch call
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+    cache: "no-store",
+  })
+
+  The second argument is the options object. Three things inside it:
+
+  ...init — spreads whatever the caller passed in (e.g. { method: "POST", body: "..." }). If init is
+   undefined, spreading undefined is a no-op in JS
+  // submitOrder passes:  { method: "POST", body: JSON.stringify(order) }
+  // getPositions passes: nothing → init is undefined → ...undefined = nothing
+
+  headers: { ...authHeaders(), ...(init?.headers ?? {}) } — builds the headers object by merging two
+   things:
+  authHeaders()  // always included:
+  // {
+  //   "APCA-API-KEY-ID":     process.env.ALPACA_API_KEY,
+  //   "APCA-API-SECRET-KEY": process.env.ALPACA_SECRET_KEY,
+  //   "Content-Type":        "application/json",
+  // }
+
+  init?.headers ?? {}
+  // init?.headers → only reads .headers if init exists, otherwise undefined
+  // ?? {}         → if undefined, use empty object instead
+  // so if caller passed extra headers they get merged in, otherwise nothing added
+
+  cache: "no-store" — tells Next.js never to cache this fetch. Without it, Next.js might cache the
+  Alpaca response and return stale positions.
+
+  ---
+  Reading the response
+  if (res.status === 204) return undefined as T
+  const body = await res.text()
+  if (!res.ok) {
+    throw new Error(`Alpaca ${res.status}: ${body}`)
+  }
+  return JSON.parse(body) as T
+  - 204 means "success but no content" (what DELETE returns) — nothing to parse, return undefined
+  - res.text() reads the raw response string first so we can log it if there's an error
+  - res.ok is true for 200–299, false otherwise — if Alpaca returned an error, throw it
+  - JSON.parse(body) as T — parses the JSON string and TypeScript trusts it's shaped like T
