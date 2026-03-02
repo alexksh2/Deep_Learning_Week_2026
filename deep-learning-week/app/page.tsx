@@ -1,8 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -12,35 +11,23 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip"
-import { RefreshCw, ArrowUpRight, Clock, AlertTriangle, TrendingUp, TrendingDown, Minus } from "lucide-react"
-import { LineChart, Line, ResponsiveContainer } from "recharts"
+import { RefreshCw, Clock, TrendingUp, TrendingDown, Minus } from "lucide-react"
 import {
-  todaysPlan,
   masteryData,
-  coachingInsights,
+  recommendations,
+  buildSkillMatrix,
   getTopicLabel,
 } from "@/lib/mock"
-import type { MasteryTrend, MasteryBadge } from "@/lib/types"
+import { skillMatrixQuizDefinitions } from "@/lib/skill-matrix-quiz-definitions"
+import type { MasteryTrend } from "@/lib/types"
+import type { StoredQuizProgress } from "@/lib/quiz-progress"
 import { useNotifications, type AppNotification, type NotificationCategory } from "@/contexts/NotificationContext"
+import { useAuth } from "@/contexts/AuthContext"
 
 function TrendIcon({ trend }: { trend: MasteryTrend }) {
   if (trend === "up") return <TrendingUp className="h-3.5 w-3.5 text-chart-2" />
   if (trend === "down") return <TrendingDown className="h-3.5 w-3.5 text-destructive" />
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />
-}
-
-function MasteryBadgeEl({ badge }: { badge: MasteryBadge }) {
-  const variants: Record<MasteryBadge, string> = {
-    Mastered: "bg-chart-2/15 text-chart-2 border-chart-2/20",
-    Improving: "bg-chart-4/15 text-chart-4 border-chart-4/20",
-    "At Risk": "bg-destructive/15 text-destructive border-destructive/20",
-    "Needs Review": "bg-chart-1/15 text-chart-1 border-chart-1/20",
-  }
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${variants[badge]}`}>
-      {badge}
-    </span>
-  )
 }
 
 function formatNotificationTime(value: string) {
@@ -84,18 +71,110 @@ function sourceLabel(source: AppNotification["source"]) {
 }
 
 export default function DashboardPage() {
-  const [plan, setPlan] = useState(todaysPlan)
   const { notifications, markAsRead } = useNotifications()
+  const { user } = useAuth()
+  const [quizProgressById, setQuizProgressById] = useState<Record<string, StoredQuizProgress>>({})
+  const aiRecommendedPlan = useMemo(
+    () =>
+      recommendations.slice(0, 3).map((item) => {
+        let link = "/learn"
+        if (item.type === "drill") link = "/trade/sim"
+        if (item.type === "quiz" && item.linkedId) link = `/learn/quiz/${item.linkedId}`
+        if (item.type === "course" && item.linkedId) link = `/learn/course/${item.linkedId}`
+
+        return {
+          id: item.id,
+          title: item.title,
+          because: item.because,
+          estimatedMinutes: item.estimatedMinutes,
+          impactTag: item.impactTag,
+          link,
+        }
+      }),
+    [],
+  )
 
   const recentNotifications = useMemo(() => notifications.slice(0, 12), [notifications])
+  const skillDefsById = useMemo(
+    () => new Map(skillMatrixQuizDefinitions.map((definition) => [definition.skillId, definition])),
+    [],
+  )
 
-  function togglePlan(id: string) {
-    setPlan((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, completed: !item.completed } : item
-      )
-    )
-  }
+  useEffect(() => {
+    let active = true
+
+    async function loadQuizProgress() {
+      if (!user?.email) {
+        if (active) setQuizProgressById({})
+        return
+      }
+
+      try {
+        const res = await fetch(
+          `/api/learn/quiz-progress?email=${encodeURIComponent(user.email)}`,
+          { cache: "no-store" },
+        )
+        if (!res.ok) {
+          if (active) setQuizProgressById({})
+          return
+        }
+
+        const data = (await res.json()) as { progress?: StoredQuizProgress[] }
+        if (!active) return
+
+        const byId: Record<string, StoredQuizProgress> = {}
+        if (Array.isArray(data.progress)) {
+          for (const progress of data.progress) {
+            if (progress?.quizId) byId[progress.quizId] = progress
+          }
+        }
+        setQuizProgressById(byId)
+      } catch {
+        if (active) setQuizProgressById({})
+      }
+    }
+
+    loadQuizProgress()
+    return () => {
+      active = false
+    }
+  }, [user?.email])
+
+  const masteryOverview = useMemo(() => {
+    const skills = buildSkillMatrix({
+      quizProgressById,
+      useQuizProgressOnly: Boolean(user?.email),
+    })
+
+    const topicTotals = new Map<string, { sum: number; count: number; skills: Set<string> }>()
+    for (const skill of skills) {
+      const definition = skillDefsById.get(skill.id)
+      if (!definition) continue
+
+      for (const topicId of definition.topicTags) {
+        const current = topicTotals.get(topicId) ?? { sum: 0, count: 0, skills: new Set<string>() }
+        current.sum += skill.measuredScore
+        current.count += 1
+        current.skills.add(definition.skillName)
+        topicTotals.set(topicId, current)
+      }
+    }
+
+    return masteryData.map((topic) => {
+      const total = topicTotals.get(topic.topicId)
+      if (!total || total.count === 0) {
+        return {
+          ...topic,
+          derivedSkills: [] as string[],
+        }
+      }
+      return {
+        ...topic,
+        score: Math.round(total.sum / total.count),
+        derivedSkills: Array.from(total.skills).sort((a, b) => a.localeCompare(b)),
+      }
+    })
+  }, [quizProgressById, skillDefsById, user?.email])
 
   return (
     <TooltipProvider>
@@ -108,11 +187,11 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
-          {/* Today's Plan */}
-          <Card className="lg:col-span-1">
+          {/* Combined Plan */}
+          <Card className="lg:col-span-3">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">{"Today's Plan"}</CardTitle>
+                <CardTitle className="text-sm font-medium">AI Recommended Plan</CardTitle>
                 <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground gap-1">
                   <RefreshCw className="h-3 w-3" />
                   Regenerate
@@ -120,65 +199,28 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {plan.map((item) => (
-                <label
-                  key={item.id}
-                  className="flex items-start gap-3 rounded-md border border-border p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                >
-                  <Checkbox
-                    checked={item.completed}
-                    onCheckedChange={() => togglePlan(item.id)}
-                    className="mt-0.5"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <Link
-                      href={item.link}
-                      className="text-sm font-medium hover:underline"
-                    >
-                      {item.label}
-                    </Link>
-                    <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground font-mono">
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">AI Recommended</p>
+                {aiRecommendedPlan.map((item) => (
+                  <Link
+                    key={item.id}
+                    href={item.link}
+                    className="block rounded-md border border-border p-3 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium leading-tight">{item.title}</p>
+                      <Badge variant="outline" className="h-5 px-1.5 text-[10px] whitespace-nowrap">
+                        {item.impactTag}
+                      </Badge>
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{item.because}</p>
+                    <div className="flex items-center gap-1 mt-1.5 text-xs text-muted-foreground font-mono">
                       <Clock className="h-3 w-3" />
                       {item.estimatedMinutes} min
                     </div>
-                  </div>
-                </label>
-              ))}
-            </CardContent>
-          </Card>
-
-          {/* Coaching Insights */}
-          <Card className="lg:col-span-2">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Coaching Insights</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {coachingInsights.map((insight) => (
-                <div
-                  key={insight.id}
-                  className="flex items-start gap-3 rounded-md border border-border p-3"
-                >
-                  <AlertTriangle
-                    className={`mt-0.5 h-4 w-4 shrink-0 ${
-                      insight.severity === "critical"
-                        ? "text-destructive"
-                        : insight.severity === "warning"
-                        ? "text-chart-1"
-                        : "text-muted-foreground"
-                    }`}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm">{insight.text}</p>
-                    <Link
-                      href={`/trade/review/${insight.evidenceSessionId}`}
-                      className="inline-flex items-center gap-1 mt-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      View evidence
-                      <ArrowUpRight className="h-3 w-3" />
-                    </Link>
-                  </div>
-                </div>
-              ))}
+                  </Link>
+                ))}
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -187,45 +229,30 @@ export default function DashboardPage() {
         <div>
           <h2 className="text-sm font-medium mb-3">Mastery Overview</h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {masteryData.map((m) => (
+            {masteryOverview.map((m) => (
               <Card key={m.topicId} className="p-0">
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="mb-2">
                     <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
                       {getTopicLabel(m.topicId)}
                     </span>
-                    <MasteryBadgeEl badge={m.badge} />
                   </div>
-                  <div className="flex items-end justify-between">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-2xl font-semibold tabular-nums">{m.score}</span>
-                      <span className="text-xs text-muted-foreground">/ 100</span>
-                      <TrendIcon trend={m.trend} />
-                    </div>
-                    <div className="h-8 w-20">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={m.sparkline.map((v, i) => ({ v, i }))}>
-                          <Line
-                            type="monotone"
-                            dataKey="v"
-                            stroke={m.trend === "down" ? "var(--color-destructive)" : "var(--color-chart-2)"}
-                            strokeWidth={1.5}
-                            dot={false}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-semibold tabular-nums">{m.score}</span>
+                    <span className="text-xs text-muted-foreground">/ 100</span>
+                    <TrendIcon trend={m.trend} />
                   </div>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="mt-2 flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                        <span>Confidence: {(m.confidenceCalibration * 100).toFixed(0)}%</span>
-                        <span>|</span>
-                        <span>Forget risk: {(m.forgettingRisk * 100).toFixed(0)}%</span>
-                      </div>
+                      <button
+                        type="button"
+                        className="mt-2 text-left text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Derived from {m.derivedSkills.length} skill{m.derivedSkills.length === 1 ? "" : "s"}
+                      </button>
                     </TooltipTrigger>
-                    <TooltipContent className="text-xs max-w-60">
-                      <p>Confidence calibration measures how well your confidence aligns with actual performance. Forgetting risk estimates likelihood of score decay without review.</p>
+                    <TooltipContent className="text-xs max-w-72">
+                      <p>{m.derivedSkills.length === 0 ? "No linked skills found for this topic." : m.derivedSkills.join(", ")}</p>
                     </TooltipContent>
                   </Tooltip>
                 </CardContent>

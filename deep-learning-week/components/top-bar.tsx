@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Search, Bell, BellRing, BookOpen, Flame, Moon, Settings2, Sun, TrendingUp, X } from "lucide-react"
+import { Search, Bell, BellRing, BookOpen, Moon, Settings2, Sun, TrendingUp, X } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -113,14 +113,6 @@ export function TopBar() {
         </button>
 
         <div className="flex items-center gap-3">
-          {/* Today status pill */}
-          <div className="hidden items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs md:flex">
-            <Flame className="h-3.5 w-3.5 text-chart-1" />
-            <span className="font-mono font-medium">{userProfile.streak}d streak</span>
-            <span className="text-muted-foreground">|</span>
-            <span className="text-muted-foreground">{userProfile.dailyStudyTarget}min planned</span>
-          </div>
-
           {/* Theme toggle */}
           <Button
             variant="ghost"

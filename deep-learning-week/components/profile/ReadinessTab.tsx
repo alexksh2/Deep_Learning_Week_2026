@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Info, Loader2, Check, ExternalLink } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -90,6 +91,63 @@ interface NextAction {
   evidenceLink: string
 }
 
+interface StudyPlanItem {
+  id: string
+  session: string
+  focus: string
+  task: string
+  durationMinutes: number
+  target: string
+}
+
+interface AgentToolTraceEntry {
+  step?: number
+  toolName?: string
+  arguments?: Record<string, unknown>
+  outputSummary?: string
+  status?: string
+  invokedAt?: string
+}
+
+interface AgentStudyPlanPayload {
+  plan?: Array<{
+    session?: string
+    focus?: string
+    task?: string
+    durationMinutes?: number
+    target?: string
+  }>
+  weeklyMinutes?: number
+  rationale?: string
+  source?: "agent" | "fallback"
+  generatedAt?: string
+  fallbackReason?: string
+  toolTrace?: AgentToolTraceEntry[]
+  auditId?: string
+  documentationPath?: string
+  prompt?: {
+    system?: string
+    user?: string
+  }
+}
+
+interface ResolvedAgentStudyPlan {
+  items: StudyPlanItem[]
+  weeklyMinutes: number
+  rationale: string
+  source: "agent" | "fallback"
+  generatedAt?: string
+  fallbackReason?: string
+  toolTrace: AgentToolTraceEntry[]
+  auditId?: string
+  documentationPath?: string
+}
+
+interface StudyPlanPrompt {
+  system: string
+  user: string
+}
+
 const impactColor: Record<string, string> = {
   High: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
   Medium: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -118,17 +176,83 @@ function dateLabel(value?: string): string {
   return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
+function resolveAgentStudyPlan(payload: AgentStudyPlanPayload): ResolvedAgentStudyPlan | null {
+  const rawItems = Array.isArray(payload.plan) ? payload.plan : []
+  const items: StudyPlanItem[] = rawItems
+    .map((item, index) => {
+      const task = typeof item.task === "string" ? item.task.trim() : ""
+      const target = typeof item.target === "string" ? item.target.trim() : ""
+      if (!task || !target) return null
+      return {
+        id: `agent-study-${index}`,
+        session: typeof item.session === "string" && item.session.trim().length > 0
+          ? item.session
+          : `Session ${index + 1}`,
+        focus: typeof item.focus === "string" && item.focus.trim().length > 0
+          ? item.focus
+          : "Focus Area",
+        task,
+        durationMinutes: clamp(
+          typeof item.durationMinutes === "number" ? Math.round(item.durationMinutes) : 25,
+          15,
+          90,
+        ),
+        target,
+      }
+    })
+    .filter((item): item is StudyPlanItem => item !== null)
+
+  if (items.length === 0) return null
+
+  const weeklyMinutes = typeof payload.weeklyMinutes === "number"
+    ? clamp(Math.round(payload.weeklyMinutes), 15, 600)
+    : items.reduce((sum, item) => sum + item.durationMinutes, 0)
+
+  const toolTrace = Array.isArray(payload.toolTrace)
+    ? payload.toolTrace.map((entry) => ({
+        step: typeof entry.step === "number" ? entry.step : undefined,
+        toolName: typeof entry.toolName === "string" ? entry.toolName : undefined,
+        arguments: entry.arguments && typeof entry.arguments === "object"
+          ? entry.arguments
+          : undefined,
+        outputSummary: typeof entry.outputSummary === "string" ? entry.outputSummary : undefined,
+        status: typeof entry.status === "string" ? entry.status : undefined,
+        invokedAt: typeof entry.invokedAt === "string" ? entry.invokedAt : undefined,
+      }))
+    : []
+
+  return {
+    items,
+    weeklyMinutes,
+    rationale: typeof payload.rationale === "string" ? payload.rationale : "",
+    source: payload.source === "fallback" ? "fallback" : "agent",
+    generatedAt: typeof payload.generatedAt === "string" ? payload.generatedAt : undefined,
+    fallbackReason: typeof payload.fallbackReason === "string" ? payload.fallbackReason : undefined,
+    toolTrace,
+    auditId: typeof payload.auditId === "string" ? payload.auditId : undefined,
+    documentationPath: typeof payload.documentationPath === "string" ? payload.documentationPath : undefined,
+  }
+}
+
 export function ReadinessTab() {
   const { user } = useAuth()
+  const searchParams = useSearchParams()
   const [diagOpen, setDiagOpen] = useState(false)
   const [diagLoading, setDiagLoading] = useState(false)
   const [diagDone, setDiagDone] = useState(false)
+  const [diagError, setDiagError] = useState("")
+  const [diagnosticPrompt, setDiagnosticPrompt] = useState<StudyPlanPrompt | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
   const [resume, setResume] = useState<ResumeAnalysisPayload | null>(null)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [behavioral, setBehavioral] = useState<BehavioralSignals | null>(null)
   const [interviewResults, setInterviewResults] = useState<InterviewResultRecord[]>([])
+  const [agentStudyPlan, setAgentStudyPlan] = useState<ResolvedAgentStudyPlan | null>(null)
+  const [agentStudyPlanLoading, setAgentStudyPlanLoading] = useState(false)
+  const autoDiagnosticHandledRef = useRef(false)
+  const quickAction = searchParams.get("quickAction")
+  const shouldAutoRunDiagnostic = quickAction === "study-plan" || quickAction === "run-diagnostic"
 
   useEffect(() => {
     let active = true
@@ -383,6 +507,60 @@ export function ReadinessTab() {
       ? `Composite blends ${explanationParts.join(", ")}.`
       : "Readiness uses fallback values until resume, interview, and trade signals are available."
 
+    const studyTaskFallback: Record<string, { task: string; durationMinutes: number }> = {
+      theory: {
+        task: "Review resume theory gaps and complete one focused concept revision set.",
+        durationMinutes: 25,
+      },
+      implementation: {
+        task: "Solve one timed implementation prompt and review tradeoffs out loud.",
+        durationMinutes: 25,
+      },
+      execution: {
+        task: "Run one risk-discipline simulator session with strict stop-loss rules.",
+        durationMinutes: 20,
+      },
+      communication: {
+        task: "Do one verbal walkthrough of a solved problem with concise reasoning.",
+        durationMinutes: 20,
+      },
+    }
+
+    const recommendationHints: Record<string, string[]> = {
+      theory: ["/profile/resume"],
+      implementation: ["/profile/interview"],
+      execution: ["/trade"],
+      communication: ["/profile/interview"],
+    }
+
+    const weakestComponents = [...breakdown].sort((a, b) => a.score - b.score).slice(0, 3)
+    const studyPlan: StudyPlanItem[] = weakestComponents.map((component, index) => {
+      const linkedRecommendation = recommendationList.find((rec) =>
+        (recommendationHints[component.key] ?? []).some((hint) => rec.evidenceLink.includes(hint)),
+      )
+      const fallback = studyTaskFallback[component.key] ?? studyTaskFallback.implementation
+      const durationMinutes = linkedRecommendation?.estimatedMinutes ?? fallback.durationMinutes
+      return {
+        id: `study-${component.key}-${index}`,
+        session: `Session ${index + 1}`,
+        focus: component.label,
+        task: linkedRecommendation?.title ?? fallback.task,
+        durationMinutes,
+        target: `Raise ${component.label} to at least ${clamp(component.score + 8, 0, 100)}/100.`,
+      }
+    })
+
+    studyPlan.push({
+      id: "study-review",
+      session: `Session ${studyPlan.length + 1}`,
+      focus: "Integrated Review",
+      task: "Review errors from interviews and trade logs, then re-test your weakest component.",
+      durationMinutes: 20,
+      target: `Lift composite readiness to ${clamp(composite + 3, 0, 100)}/100 or above.`,
+    })
+
+    const studyPlanTotalMinutes = studyPlan.reduce((sum, item) => sum + item.durationMinutes, 0)
+
     return {
       resumeScore,
       theory,
@@ -394,9 +572,107 @@ export function ReadinessTab() {
       gapData,
       readinessTrend,
       recommendations: recommendationList.slice(0, 4),
+      studyPlan,
+      studyPlanTotalMinutes,
       explanation,
     }
   }, [behavioral, interviewResults, resume, sessions])
+
+  const studyPlanRequestPayload = useMemo(() => ({
+    composite: computed.composite,
+    breakdown: computed.breakdown.map((item) => ({
+      key: item.key,
+      label: item.label,
+      score: item.score,
+    })),
+    recommendations: computed.recommendations.map((rec) => ({
+      title: rec.title,
+      estimatedMinutes: rec.estimatedMinutes,
+      impact: rec.impact,
+      because: rec.because,
+      evidenceLink: rec.evidenceLink,
+    })),
+    hoursPerWeek: 4,
+    targetRole: "Quant Trading",
+  }), [computed.breakdown, computed.composite, computed.recommendations])
+
+  const fetchAgentStudyPlan = useCallback(async (includePrompt = false) => {
+    const response = await fetch("/api/profile/readiness/study-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...studyPlanRequestPayload,
+        includePrompt,
+      }),
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      let message = `Study plan request failed (${response.status}).`
+      try {
+        const errorPayload = await response.json() as { error?: string; auditId?: string }
+        if (typeof errorPayload.error === "string" && errorPayload.error.trim()) {
+          message = errorPayload.error.trim()
+        }
+        if (typeof errorPayload.auditId === "string" && errorPayload.auditId.trim()) {
+          message = `${message} (Audit: ${errorPayload.auditId.slice(0, 8)})`
+        }
+      } catch {
+        // Keep fallback message when error body is unavailable.
+      }
+      throw new Error(message)
+    }
+
+    const payload = await response.json() as AgentStudyPlanPayload
+    const resolved = resolveAgentStudyPlan(payload)
+    const prompt =
+      includePrompt && payload.prompt && (typeof payload.prompt.system === "string" || typeof payload.prompt.user === "string")
+        ? {
+            system: typeof payload.prompt.system === "string" ? payload.prompt.system : "",
+            user: typeof payload.prompt.user === "string" ? payload.prompt.user : "",
+          }
+        : null
+
+    return { resolved, prompt }
+  }, [studyPlanRequestPayload])
+
+  useEffect(() => {
+    let active = true
+    if (loading) {
+      setAgentStudyPlan(null)
+      setAgentStudyPlanLoading(false)
+      return () => {
+        active = false
+      }
+    }
+
+    async function loadAgentStudyPlan() {
+      setAgentStudyPlanLoading(true)
+      try {
+        const { resolved } = await fetchAgentStudyPlan()
+        if (!active) return
+        setAgentStudyPlan(resolved)
+      } catch {
+        if (active) {
+          setAgentStudyPlan(null)
+        }
+      } finally {
+        if (active) {
+          setAgentStudyPlanLoading(false)
+        }
+      }
+    }
+
+    void loadAgentStudyPlan()
+    return () => {
+      active = false
+    }
+  }, [fetchAgentStudyPlan, loading])
+
+  const displayedStudyPlan = agentStudyPlan?.items.length
+    ? agentStudyPlan.items
+    : computed.studyPlan
+  const displayedStudyPlanMinutes = agentStudyPlan?.weeklyMinutes ?? computed.studyPlanTotalMinutes
 
   const trendValues = computed.readinessTrend.map((point) => point.score)
   const trendFloor = trendValues.length > 0 ? Math.min(...trendValues) : 40
@@ -411,6 +687,11 @@ export function ReadinessTab() {
     { item: "Trade session history loaded", done: sessions.length > 0 },
     { item: "Behavioral execution metrics loaded", done: Boolean(behavioral) },
     { item: "Cross-source readiness composite generated", done: true },
+    { item: "Study-plan prompt captured", done: Boolean(diagnosticPrompt?.system || diagnosticPrompt?.user) },
+    { item: "AI study plan generated", done: Boolean(agentStudyPlan?.items.length) },
+    { item: "Tool-use trace logged", done: Boolean(agentStudyPlan && (agentStudyPlan.toolTrace.length > 0 || agentStudyPlan.source === "fallback")) },
+    { item: "Audit record id captured", done: Boolean(agentStudyPlan?.auditId) },
+    { item: "Tool-logging documentation linked", done: Boolean(agentStudyPlan?.documentationPath) },
   ]
 
   const scoreComputationHelp = [
@@ -424,14 +705,45 @@ export function ReadinessTab() {
   const interviewAvgColumnHelp = "Avg = total score across answered questions / answered questions (shown as x.x/5)."
   const interviewStrongColumnHelp = "Strong = (strong answers / answered questions) * 100, where strong answers are scores 4.0/5 or higher."
 
-  const runDiagnostic = () => {
+  const runDiagnostic = useCallback(async () => {
     setDiagLoading(true)
     setDiagDone(false)
-    setTimeout(() => {
-      setDiagLoading(false)
+    setDiagError("")
+    setDiagnosticPrompt(null)
+    setAgentStudyPlanLoading(true)
+
+    try {
+      const { resolved, prompt } = await fetchAgentStudyPlan(true)
+      setDiagnosticPrompt(
+        prompt ?? {
+          system: "Prompt metadata was not returned by the study-plan service.",
+          user: "",
+        },
+      )
+      if (!resolved) {
+        throw new Error("Study plan generation returned no valid sessions.")
+      }
+      setAgentStudyPlan(resolved)
       setDiagDone(true)
-    }, 1800)
-  }
+    } catch (error) {
+      setDiagDone(false)
+      setDiagError(error instanceof Error ? error.message : "Failed to run readiness diagnostic.")
+    } finally {
+      setAgentStudyPlanLoading(false)
+      setDiagLoading(false)
+    }
+  }, [fetchAgentStudyPlan])
+
+  useEffect(() => {
+    if (autoDiagnosticHandledRef.current) return
+    if (!shouldAutoRunDiagnostic || loading || diagLoading) return
+
+    autoDiagnosticHandledRef.current = true
+    setDiagOpen(true)
+    setDiagDone(false)
+    setDiagError("")
+    void runDiagnostic()
+  }, [diagLoading, loading, runDiagnostic, shouldAutoRunDiagnostic])
 
   return (
     <div className="space-y-5">
@@ -664,6 +976,79 @@ export function ReadinessTab() {
         </CardContent>
       </Card>
 
+      <Card className="p-4 gap-0">
+        <CardHeader className="p-0 mb-3">
+          <CardTitle className="text-sm font-semibold">AI Recommended Study Plan</CardTitle>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            {agentStudyPlan
+              ? `Generated by ${agentStudyPlan.source === "agent" ? "agentic planner" : "fallback planner"}${agentStudyPlan.generatedAt ? ` · ${dateLabel(agentStudyPlan.generatedAt)}` : ""}.`
+              : "Generated from the weakest readiness components and latest evidence."}
+          </p>
+        </CardHeader>
+        <CardContent className="p-0 space-y-2.5">
+          {agentStudyPlanLoading && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Refreshing agentic plan…
+            </div>
+          )}
+          {displayedStudyPlan.map((item) => (
+            <div key={item.id} className="rounded-md border border-border/70 p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{item.session}</p>
+                <Badge variant="outline" className="h-4 px-1.5 py-0 text-[10px]">
+                  {item.durationMinutes}min
+                </Badge>
+              </div>
+              <p className="text-xs font-medium">{item.focus}</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">{item.task}</p>
+              <p className="text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground/70">Target:</span> {item.target}
+              </p>
+            </div>
+          ))}
+          {agentStudyPlan?.rationale && (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <span className="font-medium text-foreground/70">Why this plan:</span> {agentStudyPlan.rationale}
+            </p>
+          )}
+          {agentStudyPlan?.fallbackReason && (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <span className="font-medium text-foreground/70">Fallback reason:</span> {agentStudyPlan.fallbackReason}
+            </p>
+          )}
+          {agentStudyPlan?.auditId && (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground/70">Audit ID:</span> {agentStudyPlan.auditId}
+            </p>
+          )}
+          {agentStudyPlan?.documentationPath && (
+            <p className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground/70">Documentation:</span> {agentStudyPlan.documentationPath}
+            </p>
+          )}
+          {agentStudyPlan && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-foreground/70">
+                Tool log ({agentStudyPlan.toolTrace.length} call{agentStudyPlan.toolTrace.length === 1 ? "" : "s"})
+              </p>
+              {agentStudyPlan.toolTrace.length > 0 ? (
+                agentStudyPlan.toolTrace.map((entry, index) => (
+                  <p key={`${entry.step ?? index}-${entry.toolName ?? "tool"}`} className="text-[11px] text-muted-foreground leading-relaxed">
+                    {(entry.step ?? index + 1)}. {entry.toolName ?? "tool"} ({entry.status ?? "unknown"}){entry.outputSummary ? ` — ${entry.outputSummary}` : ""}
+                  </p>
+                ))
+              ) : (
+                <p className="text-[11px] text-muted-foreground">No tool calls were needed for this run.</p>
+              )}
+            </div>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Weekly commitment: ~{displayedStudyPlanMinutes} minutes.
+          </p>
+        </CardContent>
+      </Card>
+
       <Card className="p-4 gap-2">
         <p className="text-xs text-muted-foreground">
           Signal coverage: resume {computed.resumeScore != null ? "ready" : "missing"} · interview {interviewResults.length} record(s) · trade {sessions.length} session(s)
@@ -684,13 +1069,14 @@ export function ReadinessTab() {
         onClick={() => {
           setDiagOpen(true)
           setDiagDone(false)
+          setDiagError("")
         }}
       >
         Run full diagnostic
       </Button>
 
       <Dialog open={diagOpen} onOpenChange={setDiagOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-base">Full Readiness Diagnostic</DialogTitle>
           </DialogHeader>
@@ -712,6 +1098,26 @@ export function ReadinessTab() {
               </div>
             ))}
           </div>
+          {diagnosticPrompt && (
+            <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-2.5">
+              <p className="text-[11px] font-medium">Prompt sent to study-plan agent</p>
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">System</p>
+                <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[10px] leading-relaxed">
+                  {diagnosticPrompt.system || "N/A"}
+                </pre>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">User</p>
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-[10px] leading-relaxed">
+                  {diagnosticPrompt.user || "N/A"}
+                </pre>
+              </div>
+            </div>
+          )}
+          {diagError && (
+            <p className="text-xs text-destructive">{diagError}</p>
+          )}
           <DialogFooter>
             {!diagDone ? (
               <Button size="sm" onClick={runDiagnostic} disabled={diagLoading} className="gap-1.5">

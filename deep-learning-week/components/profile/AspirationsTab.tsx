@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
-import { aspirationsData, careerIntentData } from "@/lib/mock"
+import { aspirationsData } from "@/lib/mock"
 import type { AspirationsData } from "@/lib/types"
 import { useAuth } from "@/contexts/AuthContext"
 import { loadStoredAspirations, saveStoredAspirations } from "@/lib/profile-client-state"
@@ -138,21 +138,6 @@ export function AspirationsTab() {
     setTimeout(() => setSaved(false), 2000)
   }
 
-  const suggestions = [
-    careerIntentData.targetRole === "Quant Trading"
-      ? `Target role: ${careerIntentData.targetRole} — microstructure and execution drills will be weighted higher.`
-      : null,
-    form.learningStyle === "drills"
-      ? "Learning style: drills — daily plan will front-load short, high-repetition exercises."
-      : null,
-    form.weaknesses.includes("Execution Discipline")
-      ? "Weakness flagged: Execution Discipline — stop-loss and overtrading scenarios added to drill rotation."
-      : null,
-    form.riskTolerancePref === "balanced"
-      ? "Paper trading difficulty: balanced — drills simulate moderate volatility regimes."
-      : null,
-  ].filter(Boolean) as string[]
-
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-5">
       {/* Form */}
@@ -205,26 +190,8 @@ export function AspirationsTab() {
         </Button>
       </div>
 
-      {/* Suggestions sidebar */}
+      {/* Sidebar */}
       <div className="space-y-3">
-        <Card className="p-4 gap-0">
-          <CardHeader className="p-0 mb-3">
-            <CardTitle className="text-sm font-semibold">How this shapes your plan</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0 space-y-2.5">
-            {suggestions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Fill in the form to see how your preferences affect recommendations.</p>
-            ) : (
-              suggestions.map((s, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground leading-relaxed">
-                  <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-                  {s}
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-
         <Card className="p-4 gap-0 border-amber-500/20 bg-amber-500/5">
           <CardContent className="p-0">
             <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 mb-1">Coaching tip</p>

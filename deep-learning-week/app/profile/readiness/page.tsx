@@ -6,7 +6,7 @@ export default function ReadinessPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Readiness</h1>
         <p className="text-sm text-muted-foreground">
-          Track your readiness index, diagnostic gaps, and interview preparation signal.
+          Track your readiness index, diagnostic gaps, interview preparation signal, and AI-recommended study plan.
         </p>
       </div>
       <ReadinessTab />

@@ -2,9 +2,11 @@
 
 import { useState } from "react"
 import { Stethoscope, BookOpen, BarChart2, Loader2 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { useNotifications } from "@/contexts/NotificationContext"
 
 const actions = [
   { icon: Stethoscope, label: "Run Readiness Check",         key: "readiness" },
@@ -13,12 +15,28 @@ const actions = [
 ]
 
 export function QuickActionsCard() {
+  const router = useRouter()
   const [loading, setLoading] = useState<string | null>(null)
   const [dialogKey, setDialogKey] = useState<string | null>(null)
+  const { addNotification } = useNotifications()
 
   const handleAction = (key: string) => {
+    if (key === "study") {
+      router.push("/profile/readiness?quickAction=study-plan")
+      return
+    }
+
     setLoading(key)
     setTimeout(() => {
+      if (key === "trade") {
+        addNotification({
+          title: "Paper trading drill scheduled",
+          body: "Stop-loss discipline drill is queued for tomorrow at 09:30.",
+          href: "/trade/sim",
+          category: "trade",
+          source: "trade",
+        })
+      }
       setLoading(null)
       setDialogKey(key)
     }, 1200)
