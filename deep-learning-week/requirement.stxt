@@ -1,0 +1,10 @@
+Skills Matrix Status Requirement
+
+- Status must be dynamically generated from `measuredScore` (0-100), not hardcoded.
+- Thresholds:
+  - `Verified`: score > 70
+  - `Needs Evidence`: score >= 50 and <= 70
+  - `At Risk`: score < 50
+- This mapping must drive both:
+  - Per-skill status badge in each row
+  - Summary counters for Verified / Needs Evidence / At Risk

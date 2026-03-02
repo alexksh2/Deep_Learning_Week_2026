@@ -1,14 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { FileText, Link2, Stethoscope, BookOpen, BarChart2, Loader2 } from "lucide-react"
+import { Stethoscope, BookOpen, BarChart2, Loader2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 
 const actions = [
-  { icon: FileText,    label: "Add Resume",                  key: "resume" },
-  { icon: Link2,       label: "Add Portfolio Link",          key: "link" },
   { icon: Stethoscope, label: "Run Readiness Check",         key: "readiness" },
   { icon: BookOpen,    label: "Generate Study Plan",         key: "study" },
   { icon: BarChart2,   label: "Schedule Paper Trading Drill",key: "trade" },
@@ -19,10 +17,6 @@ export function QuickActionsCard() {
   const [dialogKey, setDialogKey] = useState<string | null>(null)
 
   const handleAction = (key: string) => {
-    if (key === "resume" || key === "link") {
-      setDialogKey(key)
-      return
-    }
     setLoading(key)
     setTimeout(() => {
       setLoading(null)

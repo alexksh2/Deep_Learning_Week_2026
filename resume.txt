@@ -1,0 +1,15 @@
+  app/profile/resume/page.tsx
+  - Drag-and-drop upload zone (click or drop), accepts PDF and TXT                                      
+  - Shows file name/size after selection with a Remove button
+  - Analyse button → streams to API → displays results                                                            
+  - Results render in order: Assessment banner → Personal Info → Summary → Experience → Education → Skills →
+  Projects → Certifications                                                                                       
+                                                            
+  app/api/profile/resume/route.ts                                                                                 
+  - Reads multipart form upload                                                                                   
+  - PDF → base64 → Claude document API (native PDF understanding)                                                 
+  - TXT → plain text in prompt                                                                                    
+  - Claude returns a structured JSON matching a fixed schema                                                      
+  - Fields: personal, summary, experience, education, skills, projects, certifications, assessment
+  - assessment.overall_score is 1–10 rendered as an SVG ring chart, colour-coded green/amber/red
+  - assessment.quant_relevance gives 2–3 sentences on fit for quant roles

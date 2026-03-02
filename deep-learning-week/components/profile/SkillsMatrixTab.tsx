@@ -1,16 +1,15 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { ChevronRight, ExternalLink } from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useEffect, useMemo, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { Separator } from "@/components/ui/separator"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { skillMatrix } from "@/lib/mock"
+import { buildSkillMatrix, getSkillBadgeFromScore } from "@/lib/mock"
+import { useAuth } from "@/contexts/AuthContext"
 import type { SkillBadge, SkillEntry } from "@/lib/types"
+import type { StoredQuizProgress } from "@/lib/quiz-progress"
 
 const badgeStyle: Record<SkillBadge, string> = {
   "Verified":       "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -18,25 +17,14 @@ const badgeStyle: Record<SkillBadge, string> = {
   "At Risk":        "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
 }
 
-const evidenceStyle: Record<SkillEntry["evidenceType"], string> = {
-  quiz:   "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  trade:  "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  course: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
-  none:   "bg-muted text-muted-foreground",
-}
-
-function ScoreDots({ rating, max = 5 }: { rating: number; max?: number }) {
-  return (
-    <div className="flex items-center gap-0.5">
-      {Array.from({ length: max }).map((_, i) => (
-        <span key={i} className={`inline-block h-1.5 w-1.5 rounded-full ${i < rating ? "bg-foreground" : "bg-muted-foreground/20"}`} />
-      ))}
-    </div>
-  )
-}
-
 function ScoreBar({ score }: { score: number }) {
-  const color = score >= 75 ? "bg-emerald-500" : score >= 50 ? "bg-amber-500" : "bg-red-500"
+  const badge = getSkillBadgeFromScore(score)
+  const color =
+    badge === "Verified"
+      ? "bg-emerald-500"
+      : badge === "Needs Evidence"
+        ? "bg-amber-500"
+        : "bg-red-500"
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-16 rounded-full bg-muted overflow-hidden">
@@ -48,18 +36,10 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 function SkillRow({ skill }: { skill: SkillEntry }) {
+  const badge = getSkillBadgeFromScore(skill.measuredScore)
   return (
-    <div className="grid grid-cols-[minmax(160px,1fr)_auto_auto_auto_auto_auto] items-center gap-3 py-2 px-3 hover:bg-muted/20 rounded-md transition-colors">
+    <div className="grid grid-cols-[minmax(160px,1fr)_auto_auto_auto] items-center gap-3 py-2 px-3 hover:bg-muted/20 rounded-md transition-colors">
       <span className="text-xs font-medium truncate">{skill.skillName}</span>
-
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="cursor-default"><ScoreDots rating={skill.selfRating} /></div>
-          </TooltipTrigger>
-          <TooltipContent className="text-xs">Self-rating: {skill.selfRating}/5</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
 
       <TooltipProvider>
         <Tooltip>
@@ -67,26 +47,22 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
             <div className="cursor-default"><ScoreBar score={skill.measuredScore} /></div>
           </TooltipTrigger>
           <TooltipContent className="text-xs">
-            Measured score from quizzes, mastery signals, and trading evidence (0–100).
+            {skill.evidence}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
 
-      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${evidenceStyle[skill.evidenceType]}`}>
-        {skill.evidence}
-      </span>
-
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${badgeStyle[skill.badge]}`}>
-              {skill.badge}
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${badgeStyle[badge]}`}>
+              {badge}
             </span>
           </TooltipTrigger>
           <TooltipContent className="text-xs max-w-[200px]">
-            {skill.badge === "Verified" && "Score ≥ 70 with quiz or trading evidence confirming proficiency."}
-            {skill.badge === "Needs Evidence" && "Self-rating present but no confirmed external signal yet."}
-            {skill.badge === "At Risk" && "Score falling or below 50. Prioritised in study plan."}
+            {badge === "Verified" && "Score above 70 with quiz or trading evidence confirming proficiency."}
+            {badge === "Needs Evidence" && "Score between 50 and 70. More evidence is needed to validate proficiency."}
+            {badge === "At Risk" && "Score below 50. Prioritised in study plan."}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -99,16 +75,67 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
 }
 
 export function SkillsMatrixTab() {
+  const { user } = useAuth()
   const [badgeFilter, setBadgeFilter] = useState("all")
+  const [quizProgressById, setQuizProgressById] = useState<Record<string, StoredQuizProgress>>({})
+
+  useEffect(() => {
+    let active = true
+
+    async function loadQuizProgress() {
+      if (!user?.email) {
+        if (active) setQuizProgressById({})
+        return
+      }
+
+      try {
+        const res = await fetch(
+          `/api/learn/quiz-progress?email=${encodeURIComponent(user.email)}`,
+          { cache: "no-store" },
+        )
+        if (!res.ok) {
+          if (active) setQuizProgressById({})
+          return
+        }
+
+        const data = (await res.json()) as { progress?: StoredQuizProgress[] }
+        if (!active) return
+
+        const byId: Record<string, StoredQuizProgress> = {}
+        if (Array.isArray(data.progress)) {
+          for (const progress of data.progress) {
+            if (progress?.quizId) byId[progress.quizId] = progress
+          }
+        }
+        setQuizProgressById(byId)
+      } catch {
+        if (active) setQuizProgressById({})
+      }
+    }
+
+    loadQuizProgress()
+    return () => {
+      active = false
+    }
+  }, [user?.email])
+
+  const skills = useMemo(
+    () =>
+      buildSkillMatrix({
+        quizProgressById,
+        useQuizProgressOnly: Boolean(user?.email),
+      }),
+    [quizProgressById, user?.email],
+  )
 
   const categories = useMemo(() => {
     const grouped: Record<string, SkillEntry[]> = {}
-    for (const s of skillMatrix) {
+    for (const s of skills) {
       if (!grouped[s.category]) grouped[s.category] = []
       grouped[s.category].push(s)
     }
     return grouped
-  }, [])
+  }, [skills])
 
   const filtered = useMemo(() => {
     const result: Record<string, SkillEntry[]> = {}
@@ -122,9 +149,9 @@ export function SkillsMatrixTab() {
     return result
   }, [categories, badgeFilter])
 
-  const totalAt  = skillMatrix.filter(s => s.badge === "At Risk").length
-  const totalVer = skillMatrix.filter(s => s.badge === "Verified").length
-  const totalNE  = skillMatrix.filter(s => s.badge === "Needs Evidence").length
+  const totalAt  = skills.filter(s => s.badge === "At Risk").length
+  const totalVer = skills.filter(s => s.badge === "Verified").length
+  const totalNE  = skills.filter(s => s.badge === "Needs Evidence").length
 
   return (
     <div className="space-y-4">
@@ -159,11 +186,6 @@ export function SkillsMatrixTab() {
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <span className="flex gap-0.5">{[...Array(5)].map((_, i) => <span key={i} className="inline-block h-1.5 w-1.5 rounded-full bg-foreground" />)}</span>
-            Self-rating (1–5)
-          </span>
-          <span>·</span>
-          <span className="flex items-center gap-1.5">
             <span className="inline-block h-1.5 w-16 rounded-full bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500" />
             Measured (0–100)
           </span>
@@ -194,11 +216,9 @@ export function SkillsMatrixTab() {
               </AccordionTrigger>
               <AccordionContent className="px-0 pt-0 pb-0">
                 <div className="border-t border-border">
-                  <div className="grid grid-cols-[minmax(160px,1fr)_auto_auto_auto_auto_auto] gap-3 px-3 py-1.5 bg-muted/20 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <div className="grid grid-cols-[minmax(160px,1fr)_auto_auto_auto] gap-3 px-3 py-1.5 bg-muted/20 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     <span>Skill</span>
-                    <span>Self</span>
                     <span>Measured</span>
-                    <span>Evidence</span>
                     <span>Status</span>
                     <span></span>
                   </div>

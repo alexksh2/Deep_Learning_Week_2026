@@ -23,7 +23,11 @@ export async function POST(request: Request) {
   }
   try {
     const body: OrderRequest = await request.json()
-    const order = await submitOrder(body)
+    const symbol = body.symbol?.trim().toUpperCase()
+    if (!symbol) {
+      return NextResponse.json({ error: "Ticker symbol is required" }, { status: 400 })
+    }
+    const order = await submitOrder({ ...body, symbol })
     return NextResponse.json(order)
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 422 })

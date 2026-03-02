@@ -1,10 +1,9 @@
 "use client"
 
-import { useState } from "react"
-import { Search, Bell, Flame, Sun, Moon } from "lucide-react"
+import { useMemo, useState } from "react"
+import { Search, Bell, BellRing, BookOpen, Flame, Moon, Settings2, Sun, TrendingUp } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -16,14 +15,65 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { userProfile } from "@/lib/mock"
 import { CommandPalette } from "@/components/command-palette"
 import { useAuth } from "@/contexts/AuthContext"
+import { useNotifications, type NotificationCategory } from "@/contexts/NotificationContext"
+
+type NotificationFilter = "all" | "unread" | NotificationCategory
+
+const NOTIFICATION_FILTERS: { value: NotificationFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "unread", label: "Unread" },
+  { value: "trade", label: "Trade" },
+  { value: "learning", label: "Learning" },
+  { value: "system", label: "System" },
+]
+
+function formatNotificationTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const deltaMs = Date.now() - date.getTime()
+  const minute = 60 * 1000
+  const hour = 60 * minute
+
+  if (deltaMs < hour) {
+    const mins = Math.max(1, Math.floor(deltaMs / minute))
+    return `${mins}m ago`
+  }
+
+  if (deltaMs < 24 * hour) {
+    return `${Math.floor(deltaMs / hour)}h ago`
+  }
+
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+function categoryLabel(category: NotificationCategory) {
+  if (category === "trade") return "Trade"
+  if (category === "learning") return "Learning"
+  return "System"
+}
+
+function categoryIcon(category: NotificationCategory) {
+  if (category === "trade") return <TrendingUp className="h-3.5 w-3.5" />
+  if (category === "learning") return <BookOpen className="h-3.5 w-3.5" />
+  return <Settings2 className="h-3.5 w-3.5" />
+}
+
+function categoryTone(category: NotificationCategory) {
+  if (category === "trade") return "border-chart-2/30 bg-chart-2/10 text-chart-2"
+  if (category === "learning") return "border-chart-1/30 bg-chart-1/10 text-chart-1"
+  return "border-border bg-muted/70 text-muted-foreground"
+}
 
 export function TopBar() {
   const [searchOpen, setSearchOpen] = useState(false)
+  const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all")
   const { resolvedTheme, setTheme } = useTheme()
   const { user, logout } = useAuth()
+  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll } = useNotifications()
   const router = useRouter()
 
   const displayName = user?.name ?? userProfile.name
@@ -34,6 +84,18 @@ export function TopBar() {
     logout()
     router.replace("/login")
   }
+
+  const unreadBadge = unreadCount > 99 ? "99+" : String(unreadCount)
+  const filteredNotifications = useMemo(() => {
+    const source =
+      notificationFilter === "all"
+        ? notifications
+        : notificationFilter === "unread"
+          ? notifications.filter((item) => !item.read)
+          : notifications.filter((item) => item.category === notificationFilter)
+
+    return source.slice(0, 20)
+  }, [notifications, notificationFilter])
 
   return (
     <>
@@ -72,13 +134,122 @@ export function TopBar() {
           </Button>
 
           {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative h-8 w-8">
-            <Bell className="h-4 w-4" />
-            <Badge className="absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full p-0 text-[9px] flex items-center justify-center">
-              3
-            </Badge>
-            <span className="sr-only">Notifications</span>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="relative h-8 w-8">
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 && (
+                  <Badge className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full border border-background px-1 text-[9px] leading-none flex items-center justify-center">
+                    {unreadBadge}
+                  </Badge>
+                )}
+                <span className="sr-only">Notifications</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={8} className="w-[360px] sm:w-[420px] p-0 overflow-hidden rounded-xl">
+              <div className="border-b border-border bg-muted/30 px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold leading-tight">Notifications</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      Trade, learning, and system updates in one feed.
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                    <BellRing className="h-3 w-3" />
+                    <span>{unreadCount} unread</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {NOTIFICATION_FILTERS.map((filter) => (
+                    <button
+                      key={filter.value}
+                      type="button"
+                      onClick={() => setNotificationFilter(filter.value)}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                        notificationFilter === filter.value
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border bg-background text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <ScrollArea className="h-[360px]">
+                {filteredNotifications.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center text-xs text-muted-foreground">
+                    <BellRing className="h-5 w-5 opacity-60" />
+                    <p>No notifications in this view.</p>
+                  </div>
+                ) : (
+                  <div className="p-2">
+                    {filteredNotifications.map((item) => (
+                      <DropdownMenuItem
+                        key={item.id}
+                        onSelect={() => markAsRead(item.id)}
+                        className="mb-1 cursor-pointer rounded-lg p-0 focus:bg-transparent"
+                        asChild
+                      >
+                        <a
+                          href={item.href}
+                          className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/60 ${
+                            item.read ? "border-transparent bg-transparent" : "border-border bg-muted/40"
+                          }`}
+                        >
+                          <div className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${categoryTone(item.category)}`}>
+                            {categoryIcon(item.category)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-0.5 flex items-center justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  {categoryLabel(item.category)}
+                                </span>
+                                {!item.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/80" />}
+                              </div>
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                {formatNotificationTime(item.createdAt)}
+                              </span>
+                            </div>
+                            <p className="line-clamp-1 text-sm font-medium leading-tight">{item.title}</p>
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.body}</p>
+                          </div>
+                        </a>
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+
+              <div className="flex items-center justify-between border-t border-border bg-background px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">{notifications.length} total</div>
+                <div className="flex items-center gap-3">
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={markAllAsRead}
+                      className="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  {notifications.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAll}
+                      className="text-[11px] text-muted-foreground transition-colors hover:text-destructive"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* User dropdown */}
           <DropdownMenu>
@@ -100,7 +271,10 @@ export function TopBar() {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <a href="/profile">Profile &amp; Settings</a>
+                <a href="/profile">Profile</a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href="/profile/settings">Settings</a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">

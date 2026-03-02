@@ -40,18 +40,24 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
-import {
-  LineChart,
-  Line,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-} from "recharts"
 import { AlertTriangle, RefreshCw, Wifi, WifiOff } from "lucide-react"
 import type { OrderType, OrderSide } from "@/lib/types"
 import type { AlpacaOrder, AlpacaPosition, AlpacaAccount, AlpacaBar } from "@/lib/alpaca"
+import { CandlestickChart } from "@/components/CandlestickChart"
+import type { OHLCBar } from "@/components/CandlestickChart"
+import { useNotifications } from "@/contexts/NotificationContext"
+
+type FatFingerEvent = {
+  orderId: string
+  createdAt: string
+  symbol: string
+  side: "buy" | "sell"
+  qty: number
+  maxPositionAtOrder: number
+}
+
+const FAT_FINGER_STORAGE_KEY = "trade-sim-fat-finger-events-v1"
+const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,9}$/
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -75,19 +81,20 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
 }
 
-// ── Types ─────────────────────────────────────────────────────────────
-
-interface ChartPoint {
-  time: string
-  price: number
-}
 
 // ── Component ─────────────────────────────────────────────────────────
 
 export default function SimulatorPage() {
+  const { addNotification } = useNotifications()
   const [symbol, setSymbol] = useState("SPY")
+  const [symbolInput, setSymbolInput] = useState("SPY")
   const [timeframe, setTimeframe] = useState("5m")
   const [sessionActive, setSessionActive] = useState(false)
+
+  // Date range for chart — default: last 30 days to today
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+  const [startDate, setStartDate] = useState(thirtyDaysAgo)
+  const [endDate, setEndDate] = useState("")  // empty = no end cap
 
   // Order ticket
   const [orderType, setOrderType] = useState<OrderType>("Market")
@@ -99,7 +106,7 @@ export default function SimulatorPage() {
   const [stopLossPct, setStopLossPct] = useState("2")
 
   // Alpaca data
-  const [bars, setBars] = useState<ChartPoint[]>([])
+  const [bars, setBars] = useState<OHLCBar[]>([])
   const [orders, setOrders] = useState<AlpacaOrder[]>([])
   const [positions, setPositions] = useState<AlpacaPosition[]>([])
   const [account, setAccount] = useState<AlpacaAccount | null>(null)
@@ -111,27 +118,66 @@ export default function SimulatorPage() {
   const [orderSuccess, setOrderSuccess] = useState("")
   const [nudges, setNudges] = useState<string[]>([])
   const [configError, setConfigError] = useState(false)
+  const [learnerMode, setLearnerMode] = useState(false)
+  const [fatFingerEvents, setFatFingerEvents] = useState<FatFingerEvent[]>(() => {
+    if (typeof window === "undefined") return []
+    try {
+      const raw = window.localStorage.getItem(FAT_FINGER_STORAGE_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Data fetchers ───────────────────────────────────────────────────
 
-  const fetchBars = useCallback(async () => {
+  const DISPLAY_BARS: Record<string, number> = {
+    "1m":  390,
+    "5m":  390,
+    "15m": 520,
+    "1h":  504,
+    "1d":  365,
+  }
+  const fetchBars = useCallback(async (targetSymbol: string = symbol) => {
     setIsLoadingBars(true)
+    setBars([])
     try {
-      const res = await fetch(`/api/alpaca/bars/${symbol}?timeframe=${timeframe}&limit=100`)
+      const res = await fetch(`/api/alpaca/bars/${encodeURIComponent(targetSymbol)}?timeframe=${timeframe}`)
       if (res.status === 503) { setConfigError(true); return }
       if (!res.ok) return
       const data = await res.json()
-      const points: ChartPoint[] = (data.bars ?? []).map((b: AlpacaBar) => ({
-        time: new Date(b.t).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-        price: b.c,
-      }))
-      setBars(points)
+      let allBars: AlpacaBar[] = data.bars ?? []
+      // Filter client-side — avoids sending recent dates to Alpaca (free SIP restriction)
+      if (startDate) allBars = allBars.filter(b => b.t >= startDate)
+      if (endDate)   allBars = allBars.filter(b => b.t.slice(0, 10) <= endDate)
+      setBars(allBars.map((b: AlpacaBar) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c })))
     } finally {
       setIsLoadingBars(false)
     }
-  }, [symbol, timeframe])
+  }, [symbol, timeframe, startDate, endDate])
+
+  const applySymbol = useCallback(() => {
+    const normalized = symbolInput.trim().toUpperCase()
+    if (!normalized) {
+      setOrderError("Enter a ticker symbol.")
+      return null
+    }
+    if (!SYMBOL_PATTERN.test(normalized)) {
+      setOrderError("Invalid ticker format. Use letters/numbers plus optional . or - (e.g. AAPL, BRK.B).")
+      return null
+    }
+    setOrderError("")
+    setSymbolInput(normalized)
+    if (normalized !== symbol) {
+      setSymbol(normalized)
+      setOrderSuccess("")
+    }
+    return normalized
+  }, [symbolInput, symbol])
 
   const fetchOrders = useCallback(async () => {
     const res = await fetch("/api/alpaca/orders?status=all&limit=50")
@@ -192,25 +238,46 @@ export default function SimulatorPage() {
     }
   }, [filledCount])
 
+  useEffect(() => {
+    window.localStorage.setItem(FAT_FINGER_STORAGE_KEY, JSON.stringify(fatFingerEvents))
+  }, [fatFingerEvents])
+
   // ── Actions ─────────────────────────────────────────────────────────
 
   const handleSessionToggle = async () => {
     if (sessionActive) {
       // End session: cancel all open orders
       const open = orders.filter(o => mapStatus(o.status) === "pending")
+      const filled = orders.filter(o => mapStatus(o.status) === "filled")
       await Promise.allSettled(
         open.map(o => fetch(`/api/alpaca/orders/${o.id}`, { method: "DELETE" }))
       )
       await fetchOrders()
       setSessionActive(false)
       setNudges([])
+      addNotification({
+        title: "Trading session ended",
+        body: `${filled.length} filled order${filled.length === 1 ? "" : "s"} this session.`,
+        href: "/trade?section=sessions",
+        category: "trade",
+        source: "trade",
+      })
     } else {
+      const activeSymbol = applySymbol()
+      if (!activeSymbol) return
       setSessionActive(true)
       setOrderError("")
       setOrderSuccess("")
-      await fetchBars()
+      await fetchBars(activeSymbol)
       await fetchOrders()
       await fetchPositions()
+      addNotification({
+        title: "Trading session started",
+        body: `${activeSymbol} • ${timeframe} simulator session is active.`,
+        href: "/trade/sim",
+        category: "trade",
+        source: "trade",
+      })
     }
   }
 
@@ -219,8 +286,12 @@ export default function SimulatorPage() {
     setOrderSuccess("")
     setIsSubmitting(true)
     try {
+      const activeSymbol = applySymbol()
+      if (!activeSymbol) return
+      const qtyNumber = parseInt(qty, 10)
+      const exceedsMaxPosition = Number.isFinite(qtyNumber) && qtyNumber > maxPosition[0]
       const body: Record<string, string | boolean> = {
-        symbol,
+        symbol: activeSymbol,
         qty,
         side: orderSide.toLowerCase(),
         type: orderType.toLowerCase(),
@@ -243,7 +314,34 @@ export default function SimulatorPage() {
         return
       }
 
-      setOrderSuccess(`${orderSide} ${qty} ${symbol} order submitted (${data.status})`)
+      setOrderSuccess(`${orderSide} ${qty} ${activeSymbol} order submitted (${data.status})`)
+      addNotification({
+        title: `${orderSide} order submitted`,
+        body: `${qty} ${activeSymbol} (${orderType.toLowerCase()}) • ${data.status}`,
+        href: "/trade/sim",
+        category: "trade",
+        source: "trade",
+      })
+      if (exceedsMaxPosition && data.id) {
+        setFatFingerEvents((prev) => [
+          {
+            orderId: data.id,
+            createdAt: data.created_at ?? new Date().toISOString(),
+            symbol: activeSymbol,
+            side: orderSide.toLowerCase() as "buy" | "sell",
+            qty: qtyNumber,
+            maxPositionAtOrder: maxPosition[0],
+          },
+          ...prev,
+        ])
+        addNotification({
+          title: "Risk alert: max position exceeded",
+          body: `Order size ${qty} is above learner limit ${maxPosition[0]}.`,
+          href: "/trade/sim",
+          category: "system",
+          source: "system",
+        })
+      }
       // Refresh immediately
       await Promise.all([fetchOrders(), fetchPositions()])
     } catch (e) {
@@ -251,10 +349,10 @@ export default function SimulatorPage() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [symbol, qty, orderSide, orderType, limitPrice, fetchOrders, fetchPositions])
+  }, [qty, orderSide, orderType, limitPrice, fetchOrders, fetchPositions, maxPosition, addNotification, applySymbol])
 
   // Latest price from bars
-  const latestPrice = bars[bars.length - 1]?.price
+  const latestPrice = bars[bars.length - 1]?.c
 
   // ── Render ───────────────────────────────────────────────────────────
 
@@ -288,27 +386,66 @@ export default function SimulatorPage() {
 
         {/* Top controls */}
         <div className="flex flex-wrap items-center gap-3">
-          <Select value={symbol} onValueChange={setSymbol}>
-            <SelectTrigger className="w-28 h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
+          <div className="flex items-center gap-1.5">
+            <Input
+              value={symbolInput}
+              onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  applySymbol()
+                }
+              }}
+              placeholder="Ticker"
+              list="trade-sim-symbol-suggestions"
+              className="h-9 w-32 font-mono"
+            />
+            <datalist id="trade-sim-symbol-suggestions">
               {["SPY", "QQQ", "IWM", "TLT", "GLD"].map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
+                <option key={s} value={s} />
               ))}
-            </SelectContent>
-          </Select>
+            </datalist>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9"
+              onClick={applySymbol}
+              disabled={!symbolInput.trim() || symbolInput.trim().toUpperCase() === symbol}
+            >
+              Load
+            </Button>
+          </div>
 
           <Select value={timeframe} onValueChange={setTimeframe}>
             <SelectTrigger className="w-24 h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {["1m", "5m", "15m", "1h"].map((tf) => (
+              {["1m", "5m", "15m", "1h", "1d"].map((tf) => (
                 <SelectItem key={tf} value={tf}>{tf}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+
+          {/* Date range */}
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={startDate}
+              max={endDate || undefined}
+              onChange={e => setStartDate(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <span className="text-xs text-muted-foreground">–</span>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate}
+              placeholder="latest"
+              onChange={e => setEndDate(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
 
           <Button
             size="sm"
@@ -377,42 +514,15 @@ export default function SimulatorPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64">
-                {bars.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={bars}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fontSize: 9, fill: "var(--color-muted-foreground)" }}
-                        interval={Math.floor(bars.length / 6)}
-                      />
-                      <YAxis
-                        domain={["auto", "auto"]}
-                        tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }}
-                      />
-                      <RechartsTooltip
-                        contentStyle={{
-                          backgroundColor: "var(--color-popover)",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: "var(--radius-md)",
-                          fontSize: 11,
-                        }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="price"
-                        stroke="var(--color-foreground)"
-                        strokeWidth={1.5}
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {isLoadingBars ? "Loading chart…" : "No data available"}
-                  </div>
-                )}
+              <div className="h-64 relative">
+                {bars.length > 0
+                  ? <CandlestickChart bars={bars} className="h-full w-full" />
+                  : (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                      {isLoadingBars ? "Loading chart…" : "No data available"}
+                    </div>
+                  )
+                }
               </div>
             </CardContent>
           </Card>
@@ -420,7 +530,13 @@ export default function SimulatorPage() {
           {/* Order ticket */}
           <Card>
             <CardHeader className="/b-2">
-              <CardTitle className="text-sm font-medium">Order Ticket</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium">Order Ticket</CardTitle>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground">Learner Mode</span>
+                  <Switch checked={learnerMode} onCheckedChange={setLearnerMode} />
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Order type */}
@@ -474,6 +590,11 @@ export default function SimulatorPage() {
                   onChange={(e) => setQty(e.target.value)}
                   className="h-8 text-sm font-mono"
                 />
+                {!learnerMode && Number.isFinite(parseInt(qty, 10)) && parseInt(qty, 10) > maxPosition[0] && (
+                  <p className="text-[10px] text-chart-1">
+                    Qty exceeds max position. Order will still be submitted and tagged as a fat-finger event.
+                  </p>
+                )}
               </div>
 
               {/* Limit price */}
@@ -631,6 +752,7 @@ export default function SimulatorPage() {
                     <TableHead>Symbol</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead className="text-right">Fill / Limit</TableHead>
+                    <TableHead>Risk Flag</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -639,6 +761,7 @@ export default function SimulatorPage() {
                   {orders.map((order) => {
                     const displayStatus = mapStatus(order.status)
                     const fillPrice = order.filled_avg_price ?? order.limit_price
+                    const fatFingerEvent = fatFingerEvents.find((e) => e.orderId === order.id)
                     return (
                       <TableRow key={order.id}>
                         <TableCell className="text-xs font-mono text-muted-foreground">
@@ -656,6 +779,15 @@ export default function SimulatorPage() {
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs tabular-nums">
                           {fmtPrice(fillPrice)}
+                        </TableCell>
+                        <TableCell>
+                          {fatFingerEvent ? (
+                            <Badge variant="outline" className="text-[9px] font-mono uppercase border-chart-1/40 text-chart-1">
+                              Fat Finger
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -689,8 +821,46 @@ export default function SimulatorPage() {
                   })}
                   {orders.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">
                         No orders yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </Card>
+            <Card className="mt-3">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Fat-Finger Log</CardTitle>
+              </CardHeader>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Symbol</TableHead>
+                    <TableHead>Side</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Max Position</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {fatFingerEvents.map((event) => (
+                    <TableRow key={event.orderId}>
+                      <TableCell className="text-xs font-mono text-muted-foreground">{fmtTime(event.createdAt)}</TableCell>
+                      <TableCell className="text-xs font-mono font-medium">{event.symbol}</TableCell>
+                      <TableCell>
+                        <span className={`text-xs font-mono font-medium ${event.side === "buy" ? "text-chart-2" : "text-destructive"}`}>
+                          {event.side.charAt(0).toUpperCase() + event.side.slice(1)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{event.qty}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{event.maxPositionAtOrder}</TableCell>
+                    </TableRow>
+                  ))}
+                  {fatFingerEvents.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
+                        No fat-finger events recorded yet.
                       </TableCell>
                     </TableRow>
                   )}

@@ -1,0 +1,27 @@
+⏺ Now replace the static recommendations.slice(0, 3) with followUps:
+                                                                                                                  
+⏺ Update(app/learn/quiz/[id]/page.tsx)                 
+  ⎿  Added 1 line, removed 1 line                                                                                 
+      472                  <CardTitle className="text-sm font-medium">Follow-ups</CardTitle>               
+      473                </CardHeader>                                                                            
+      474                <CardContent className="space-y-2">                                               
+      475 -                {recommendations.slice(0, 3).map((rec) => (                                            
+      475 +                {followUps.map((rec) => (                                                       
+      476                    <div key={rec.id} className="rounded-md border border-border p-2">                   
+      477                      <p className="text-xs font-medium">{rec.title}</p>                          
+      478                      <div className="flex items-center gap-2 mt-1">                                     
+                                                            
+⏺ Done. Here's how each section now works:             
+                                                                                                                  
+  Mistakes — classifies each wrong answer with a priority rule:
+  - Wrong on a hard question → Implementation
+  - Wrong but answered with High confidence → Careless (knew it, slipped up)
+  - Everything else → Conceptual (didn't understand the material)                                                 
+  
+  Follow-ups — scores every recommendation and picks the top 3:                                                   
+  - +4 if linkedId matches the current quiz (direct retry)  
+  - +2 if the recommendation links to one of the topics the user got wrong
+  - +1 if tagged "High impact"
+
+  So if you bomb a quiz, the retry for that quiz jumps to the top, followed by drills/lessons for your weak
+  topics.

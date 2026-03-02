@@ -4,12 +4,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProfileHeader } from "@/components/profile/ProfileHeader"
 import { IdentityCard } from "@/components/profile/IdentityCard"
 import { CareerIntentCard } from "@/components/profile/CareerIntentCard"
-import { QuickActionsCard } from "@/components/profile/QuickActionsCard"
 import { ResumePortfolioTab } from "@/components/profile/ResumePortfolioTab"
 import { AspirationsTab } from "@/components/profile/AspirationsTab"
 import { SkillsMatrixTab } from "@/components/profile/SkillsMatrixTab"
 import { ReadinessTab } from "@/components/profile/ReadinessTab"
-import { SettingsTab } from "@/components/profile/SettingsTab"
 
 export default function ProfilePage() {
   return (
@@ -21,7 +19,6 @@ export default function ProfilePage() {
         <div className="space-y-4 lg:sticky lg:top-4">
           <IdentityCard />
           <CareerIntentCard />
-          <QuickActionsCard />
         </div>
 
         {/* Right column — tabs */}
@@ -32,7 +29,6 @@ export default function ProfilePage() {
               { value: "aspirations", label: "Aspirations" },
               { value: "skills",      label: "Skills Matrix" },
               { value: "readiness",   label: "Readiness" },
-              { value: "settings",    label: "Settings" },
             ].map(tab => (
               <TabsTrigger
                 key={tab.value}
@@ -55,9 +51,6 @@ export default function ProfilePage() {
           </TabsContent>
           <TabsContent value="readiness">
             <ReadinessTab />
-          </TabsContent>
-          <TabsContent value="settings">
-            <SettingsTab />
           </TabsContent>
         </Tabs>
       </div>

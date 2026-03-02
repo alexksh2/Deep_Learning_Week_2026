@@ -3,6 +3,7 @@
 import { use, useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { quizzes, masteryData, getTopicLabel, recommendations } from "@/lib/mock"
+import { getQuestionPoolForQuiz, getRandomQuestionsForQuiz, QUESTIONS_PER_ATTEMPT } from "@/lib/quiz-question-bank"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -40,10 +41,12 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  AlertCircle,
   ArrowRight,
 } from "lucide-react"
-import type { Confidence, QuizQuestion } from "@/lib/types"
+import type { Confidence, QuizAttempt, QuizQuestion, QuizStatus } from "@/lib/types"
+import { useNotifications } from "@/contexts/NotificationContext"
+import { useAuth } from "@/contexts/AuthContext"
+import type { InProgressQuizState, StoredQuizProgress } from "@/lib/quiz-progress"
 
 type QuestionState = {
   answer: string
@@ -51,24 +54,237 @@ type QuestionState = {
   flagged: boolean
 }
 
+function createDefaultQuestionState(): QuestionState {
+  return { answer: "", confidence: "Med", flagged: false }
+}
+
+function isConfidence(value: unknown): value is Confidence {
+  return value === "Low" || value === "Med" || value === "High"
+}
+
+function normalizeQuestionState(value: unknown): QuestionState {
+  if (!value || typeof value !== "object") return createDefaultQuestionState()
+  const candidate = value as Partial<QuestionState>
+  return {
+    answer: typeof candidate.answer === "string" ? candidate.answer : "",
+    confidence: isConfidence(candidate.confidence) ? candidate.confidence : "Med",
+    flagged: candidate.flagged === true,
+  }
+}
+
+function restoreAttemptFromProgress(
+  quizId: string,
+  inProgress: InProgressQuizState,
+  maxTimeLeft: number
+): { questions: QuizQuestion[]; states: QuestionState[]; current: number; timeLeft: number; startedAt: string } | null {
+  const pool = getQuestionPoolForQuiz(quizId)
+  if (!Array.isArray(inProgress.questionIds) || inProgress.questionIds.length === 0) return null
+  const byId = new Map(pool.map((question) => [question.id, question]))
+
+  const questions: QuizQuestion[] = []
+  for (const questionId of inProgress.questionIds) {
+    const question = byId.get(questionId)
+    if (!question) return null
+    questions.push(question)
+  }
+
+  if (!Array.isArray(inProgress.states) || inProgress.states.length !== questions.length) return null
+  const states = inProgress.states.map((state) => normalizeQuestionState(state))
+
+  const currentRaw = Number.isFinite(inProgress.current) ? Math.floor(inProgress.current) : 0
+  const current = Math.min(Math.max(0, currentRaw), Math.max(questions.length - 1, 0))
+
+  const timeLeftRaw = Number.isFinite(inProgress.timeLeft) ? Math.floor(inProgress.timeLeft) : maxTimeLeft
+  const timeLeft = Math.min(maxTimeLeft, Math.max(0, timeLeftRaw))
+
+  const startedAt =
+    typeof inProgress.startedAt === "string" && inProgress.startedAt.trim()
+      ? inProgress.startedAt
+      : new Date().toISOString()
+
+  return { questions, states, current, timeLeft, startedAt }
+}
+
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const quiz = quizzes.find((q) => q.id === id)
+  const { addNotification } = useNotifications()
+  const { user } = useAuth()
 
   const [current, setCurrent] = useState(0)
+  const [attemptQuestions, setAttemptQuestions] = useState<QuizQuestion[]>([])
   const [states, setStates] = useState<QuestionState[]>([])
+  const [attemptsHistory, setAttemptsHistory] = useState<QuizAttempt[]>([])
+  const [attemptStartedAt, setAttemptStartedAt] = useState("")
+  const [attemptInitialized, setAttemptInitialized] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
   const [showConfirm, setShowConfirm] = useState(false)
 
   useEffect(() => {
-    if (quiz) {
-      setStates(
-        quiz.questions.map(() => ({ answer: "", confidence: "Med", flagged: false }))
-      )
-      setTimeLeft(quiz.timeLimitMinutes * 60)
+    let active = true
+
+    function startFreshAttempt(quizId: string, timeLimitSeconds: number) {
+      const sampledQuestions = getRandomQuestionsForQuiz(quizId, QUESTIONS_PER_ATTEMPT)
+      setAttemptQuestions(sampledQuestions)
+      setStates(sampledQuestions.map(() => createDefaultQuestionState()))
+      setCurrent(0)
+      setTimeLeft(timeLimitSeconds)
+      setAttemptStartedAt(new Date().toISOString())
+      setSubmitted(false)
+      setShowConfirm(false)
     }
-  }, [quiz])
+
+    async function initializeAttempt() {
+      if (!quiz) {
+        if (!active) return
+        setAttemptQuestions([])
+        setStates([])
+        setAttemptsHistory([])
+        setAttemptStartedAt("")
+        setAttemptInitialized(false)
+        return
+      }
+
+      const timeLimitSeconds = quiz.timeLimitMinutes * 60
+      setAttemptInitialized(false)
+      setSubmitted(false)
+      setShowConfirm(false)
+
+      if (!user?.email) {
+        if (!active) return
+        setAttemptsHistory(quiz.attempts)
+        startFreshAttempt(quiz.id, timeLimitSeconds)
+        setAttemptInitialized(true)
+        return
+      }
+
+      try {
+        const res = await fetch(
+          `/api/learn/quiz-progress?email=${encodeURIComponent(user.email)}&quizId=${encodeURIComponent(quiz.id)}`,
+          { cache: "no-store" }
+        )
+        const data = (res.ok ? await res.json() : null) as { progress?: StoredQuizProgress | null } | null
+        if (!active) return
+
+        const saved = data?.progress ?? null
+        setAttemptsHistory(saved?.attempts ?? [])
+
+        if (saved?.inProgress) {
+          const restored = restoreAttemptFromProgress(quiz.id, saved.inProgress, timeLimitSeconds)
+          if (restored) {
+            setAttemptQuestions(restored.questions)
+            setStates(restored.states)
+            setCurrent(restored.current)
+            setTimeLeft(restored.timeLeft)
+            setAttemptStartedAt(restored.startedAt)
+            setAttemptInitialized(true)
+            return
+          }
+        }
+
+        startFreshAttempt(quiz.id, timeLimitSeconds)
+      } catch {
+        if (!active) return
+        setAttemptsHistory([])
+        startFreshAttempt(quiz.id, timeLimitSeconds)
+      } finally {
+        if (active) setAttemptInitialized(true)
+      }
+    }
+
+    initializeAttempt()
+    return () => {
+      active = false
+    }
+  }, [quiz, user?.email])
+
+  const saveQuizProgress = useCallback(
+    async (status: QuizStatus, attempts: QuizAttempt[], inProgress: InProgressQuizState | null) => {
+      if (!quiz || !user?.email) return
+
+      try {
+        await fetch("/api/learn/quiz-progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: user.email,
+            progress: {
+              quizId: quiz.id,
+              status,
+              attempts,
+              inProgress,
+            },
+          }),
+        })
+      } catch {
+        // Ignore transient network/database failures; user can continue quiz flow.
+      }
+    },
+    [quiz, user?.email]
+  )
+
+  useEffect(() => {
+    if (!quiz || !user?.email || !attemptInitialized || submitted) return
+    if (attemptQuestions.length === 0 || states.length !== attemptQuestions.length) return
+
+    const inProgress: InProgressQuizState = {
+      questionIds: attemptQuestions.map((question) => question.id),
+      states,
+      current,
+      timeLeft,
+      startedAt: attemptStartedAt || new Date().toISOString(),
+    }
+
+    const timer = setTimeout(() => {
+      void saveQuizProgress("in-progress", attemptsHistory, inProgress)
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [quiz, user?.email, attemptInitialized, submitted, attemptQuestions, states, current, attemptsHistory, attemptStartedAt, saveQuizProgress])
+
+  useEffect(() => {
+    if (!quiz || !user?.email || !attemptInitialized || submitted) return
+    if (attemptQuestions.length === 0 || states.length !== attemptQuestions.length) return
+    if (timeLeft <= 0 || timeLeft % 15 !== 0) return
+
+    const inProgress: InProgressQuizState = {
+      questionIds: attemptQuestions.map((question) => question.id),
+      states,
+      current,
+      timeLeft,
+      startedAt: attemptStartedAt || new Date().toISOString(),
+    }
+
+    void saveQuizProgress("in-progress", attemptsHistory, inProgress)
+  }, [quiz, user?.email, attemptInitialized, submitted, attemptQuestions, states, current, attemptsHistory, attemptStartedAt, timeLeft, saveQuizProgress])
+
+  useEffect(() => {
+    if (!quiz || !user?.email || !attemptInitialized || submitted) return
+    if (typeof navigator.sendBeacon !== "function") return
+    const handleBeforeUnload = () => {
+      if (attemptQuestions.length === 0 || states.length !== attemptQuestions.length) return
+      const payload = new Blob([JSON.stringify({
+        email: user.email,
+        progress: {
+          quizId: quiz.id,
+          status: "in-progress",
+          attempts: attemptsHistory,
+          inProgress: {
+            questionIds: attemptQuestions.map((question) => question.id),
+            states,
+            current,
+            timeLeft,
+            startedAt: attemptStartedAt || new Date().toISOString(),
+          },
+        },
+      })], { type: "application/json" })
+      navigator.sendBeacon("/api/learn/quiz-progress", payload)
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [quiz, user?.email, attemptInitialized, submitted, attemptQuestions, states, current, attemptsHistory, attemptStartedAt, timeLeft])
 
   useEffect(() => {
     if (submitted || timeLeft <= 0) return
@@ -76,10 +292,46 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     return () => clearInterval(timer)
   }, [submitted, timeLeft])
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
+    if (!quiz || attemptQuestions.length === 0) return
+
+    const correct = attemptQuestions.filter(
+      (q, i) =>
+        states[i]?.answer.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase(),
+    ).length
+    const score = Math.round((correct / attemptQuestions.length) * 100)
+    const wrongCount = Math.max(0, attemptQuestions.length - correct)
+    const elapsedSeconds = Math.max(0, quiz.timeLimitMinutes * 60 - timeLeft)
+
+    const newAttempt: QuizAttempt = {
+      date: new Date().toISOString().slice(0, 10),
+      score,
+      timeSeconds: elapsedSeconds,
+      mistakeBreakdown: {
+        Conceptual: wrongCount,
+        Careless: 0,
+        Implementation: 0,
+      },
+    }
+    const updatedAttempts = [newAttempt, ...attemptsHistory]
+
+    setAttemptsHistory(updatedAttempts)
     setSubmitted(true)
     setShowConfirm(false)
-  }, [])
+
+    addNotification({
+      title: `Quiz completed: ${quiz.title}`,
+      body: `Score ${score}% (${correct}/${attemptQuestions.length}).`,
+      href: `/learn/quiz/${quiz.id}`,
+      category: "learning",
+      source: "quiz",
+    })
+
+    if (user?.email) {
+      await saveQuizProgress("completed", updatedAttempts, null)
+      return
+    }
+  }, [quiz, attemptQuestions, states, attemptsHistory, addNotification, timeLeft, user?.email, saveQuizProgress])
 
   if (!quiz) {
     return (
@@ -92,9 +344,9 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     )
   }
 
-  if (states.length === 0) return null
+  if (!attemptInitialized || states.length === 0 || attemptQuestions.length === 0) return null
 
-  const question = quiz.questions[current]
+  const question = attemptQuestions[current]
   const state = states[current]
 
   function updateState(idx: number, updates: Partial<QuestionState>) {
@@ -112,16 +364,43 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
 
   // Results
   if (submitted) {
-    const correct = quiz.questions.filter((q, i) => getResult(q, states[i])).length
-    const score = Math.round((correct / quiz.questions.length) * 100)
+    const correct = attemptQuestions.filter((q, i) => getResult(q, states[i])).length
+    const score = Math.round((correct / attemptQuestions.length) * 100)
     const topicBreakdown: Record<string, { correct: number; total: number }> = {}
-    quiz.questions.forEach((q, i) => {
+    attemptQuestions.forEach((q, i) => {
       q.topicTags.forEach((t) => {
         if (!topicBreakdown[t]) topicBreakdown[t] = { correct: 0, total: 0 }
         topicBreakdown[t].total++
         if (getResult(q, states[i])) topicBreakdown[t].correct++
       })
     })
+
+    const wrongQuestions = attemptQuestions
+      .map((q, i) => ({ q, s: states[i] }))
+      .filter(({ q, s }) => !getResult(q, s))
+
+    const mistakeBreakdown = { Conceptual: 0, Careless: 0, Implementation: 0 }
+    wrongQuestions.forEach(({ q, s }) => {
+      if (q.difficulty === "hard") mistakeBreakdown.Implementation++
+      else if (s.confidence === "High") mistakeBreakdown.Careless++
+      else mistakeBreakdown.Conceptual++
+    })
+
+    const weakTopics = new Set(
+      wrongQuestions.flatMap(({ q }) => q.topicTags)
+    )
+
+    const followUps = [...recommendations]
+      .map(rec => ({
+        rec,
+        score:
+          (rec.linkedId === quiz.id ? 4 : 0) +
+          ([...weakTopics].some(t => rec.linkedId?.includes(t)) ? 2 : 0) +
+          (rec.impactTag === "High impact" ? 1 : 0),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(({ rec }) => rec)
 
     return (
       <TooltipProvider>
@@ -146,7 +425,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
             <h1 className="text-xl font-semibold">{quiz.title}</h1>
             <div className="text-4xl font-bold tabular-nums">{score}%</div>
             <p className="text-sm text-muted-foreground">
-              {correct} of {quiz.questions.length} correct
+              {correct} of {attemptQuestions.length} correct
             </p>
           </div>
 
@@ -176,17 +455,14 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                 <CardTitle className="text-sm font-medium">Mistakes</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {["Conceptual", "Careless", "Implementation"].map((type) => {
-                  const count = type === "Conceptual" ? 2 : type === "Careless" ? 1 : 0
-                  return (
-                    <div key={type} className="flex items-center justify-between">
-                      <span className="text-xs">{type}</span>
-                      <Badge variant="secondary" className="text-[10px] font-mono">
-                        {count}
-                      </Badge>
-                    </div>
-                  )
-                })}
+                {(["Conceptual", "Careless", "Implementation"] as const).map((type) => (
+                  <div key={type} className="flex items-center justify-between">
+                    <span className="text-xs">{type}</span>
+                    <Badge variant="secondary" className="text-[10px] font-mono">
+                      {mistakeBreakdown[type]}
+                    </Badge>
+                  </div>
+                ))}
               </CardContent>
             </Card>
 
@@ -196,7 +472,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                 <CardTitle className="text-sm font-medium">Follow-ups</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {recommendations.slice(0, 3).map((rec) => (
+                {followUps.map((rec) => (
                   <div key={rec.id} className="rounded-md border border-border p-2">
                     <p className="text-xs font-medium">{rec.title}</p>
                     <div className="flex items-center gap-2 mt-1">
@@ -212,7 +488,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           {/* Question review */}
           <div className="space-y-3">
             <h2 className="text-sm font-medium">Question Review</h2>
-            {quiz.questions.map((q, i) => {
+            {attemptQuestions.map((q, i) => {
               const isCorrect = getResult(q, states[i])
               return (
                 <Card key={q.id}>
@@ -276,7 +552,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           <Card className="p-3">
             <p className="text-xs font-medium mb-2 text-muted-foreground uppercase tracking-wider">Questions</p>
             <div className="grid grid-cols-5 gap-1.5 lg:grid-cols-3">
-              {quiz.questions.map((_, i) => {
+              {attemptQuestions.map((_, i) => {
                 const s = states[i]
                 let bg = "bg-muted text-muted-foreground"
                 if (s.flagged) bg = "bg-chart-1/20 text-chart-1 border-chart-1/30"
@@ -310,7 +586,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           <Card className="p-0">
             <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
               <span className="text-xs font-mono text-muted-foreground">
-                Question {current + 1} of {quiz.questions.length}
+                Question {current + 1} of {attemptQuestions.length}
               </span>
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-mono tabular-nums ${timeLeft < 60 ? "text-destructive" : "text-muted-foreground"}`}>
@@ -398,7 +674,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                     <ChevronLeft className="h-3.5 w-3.5 mr-1" />
                     Previous
                   </Button>
-                  {current < quiz.questions.length - 1 ? (
+                  {current < attemptQuestions.length - 1 ? (
                     <Button
                       size="sm"
                       className="h-8 text-xs"
@@ -419,7 +695,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                           <DialogTitle>Submit Quiz?</DialogTitle>
                           <DialogDescription>
                             You have answered {states.filter((s) => s.answer).length} of{" "}
-                            {quiz.questions.length} questions.
+                            {attemptQuestions.length} questions.
                             {states.some((s) => s.flagged) && (
                               <span className="block mt-1 text-chart-1">
                                 {states.filter((s) => s.flagged).length} question(s) are flagged for review.

@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/next'
 import { DashboardShell } from '@/components/dashboard-shell'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { NotificationProvider } from '@/contexts/NotificationContext'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -47,9 +48,11 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <AuthProvider>
-            <DashboardShell>
-              {children}
-            </DashboardShell>
+            <NotificationProvider>
+              <DashboardShell>
+                {children}
+              </DashboardShell>
+            </NotificationProvider>
           </AuthProvider>
           <Analytics />
         </ThemeProvider>

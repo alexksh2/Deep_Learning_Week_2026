@@ -8,3 +8,15 @@ node_modules/
 .next/
 .env*.local
 .DS_Store
+
+# Python router
+router/models/
+
+# ETF analysis cache (parquet files, regenerated on demand)
+etf-analysis/cache/
+router/__pycache__/
+router/*.pyc
+
+# Local SQLite auth database
+data/*.sqlite
+data/*.db

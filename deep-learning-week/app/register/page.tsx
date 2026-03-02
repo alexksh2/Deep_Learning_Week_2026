@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { RegisterWizard } from "@/components/auth/RegisterWizard"
 import { useAuth } from "@/contexts/AuthContext"
-import type { AuthUser } from "@/contexts/AuthContext"
+import type { AuthUser } from "@/lib/auth-types"
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -17,7 +17,7 @@ export default function RegisterPage() {
     setIsLoading(true)
     setError("")
     await new Promise(r => setTimeout(r, 400))
-    const result = register(data)
+    const result = await register(data)
     if (result.success) {
       router.replace("/")
     } else {

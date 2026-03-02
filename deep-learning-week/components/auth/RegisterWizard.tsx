@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
-import type { AuthUser } from "@/contexts/AuthContext"
+import type { AuthUser } from "@/lib/auth-types"
 import type { TrackBadge, TargetRole, TargetTimeline, LearningStylePref } from "@/lib/types"
 
 interface Props {
@@ -191,7 +191,7 @@ export function RegisterWizard({ onComplete, isLoading }: Props) {
               <Label htmlFor="name">Full name</Label>
               <Input
                 id="name"
-                placeholder="Alex Chen"
+                placeholder="Alex Khoo"
                 value={form.name}
                 onChange={e => set("name", e.target.value)}
                 className={errors.name ? "border-destructive" : ""}

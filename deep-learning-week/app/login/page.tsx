@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { useAuth } from "@/contexts/AuthContext"
+import { DEMO_USER } from "@/lib/auth-demo"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,7 +24,7 @@ export default function LoginPage() {
     setIsLoading(true)
     // Small delay to feel snappy without being instant
     await new Promise(r => setTimeout(r, 300))
-    const result = login(email, password)
+    const result = await login(email, password)
     if (result.success) {
       router.replace("/")
     } else {
@@ -33,8 +34,8 @@ export default function LoginPage() {
   }
 
   function fillDemo() {
-    setEmail("alex.chen@quant.dev")
-    setPassword("demo1234")
+    setEmail(DEMO_USER.email)
+    setPassword(DEMO_USER.password)
     setError("")
   }
 
@@ -90,7 +91,7 @@ export default function LoginPage() {
       {/* Demo hint */}
       <div className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2.5 text-center text-xs text-muted-foreground">
         <p className="mb-1 font-medium text-foreground">Demo credentials</p>
-        <p>alex.chen@quant.dev / demo1234</p>
+        <p>{DEMO_USER.email} / {DEMO_USER.password}</p>
         <button
           type="button"
           onClick={fillDemo}

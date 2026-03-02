@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import {
   LayoutDashboard,
@@ -9,11 +9,14 @@ import {
   GraduationCap,
   Brain,
   Repeat2,
+  FileText,
   TrendingUp,
   Crosshair,
   History,
   MessageSquareText,
+  BarChart2,
   User,
+  FileSearch,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react"
@@ -44,6 +47,7 @@ const navItems: NavItem[] = [
       { label: "Courses", href: "/learn?tab=courses", icon: GraduationCap },
       { label: "Quizzes", href: "/learn?tab=quizzes", icon: Brain },
       { label: "Spaced Repetition", href: "/learn?tab=spaced-repetition", icon: Repeat2 },
+      { label: "Notes", href: "/learn?tab=notes", icon: FileText },
     ],
   },
   {
@@ -51,21 +55,37 @@ const navItems: NavItem[] = [
     href: "/trade",
     icon: TrendingUp,
     children: [
-      { label: "Simulator", href: "/trade/sim", icon: Crosshair },
       { label: "Sessions", href: "/trade?section=sessions", icon: History },
-      { label: "Coaching", href: "/trade?section=coaching", icon: MessageSquareText },
+      { label: "Simulator", href: "/trade/sim", icon: Crosshair },
+      { label: "Analysis", href: "/trade/analysis", icon: BarChart2 },
+      { label: "Coaching", href: "/coaching", icon: MessageSquareText },
     ],
   },
-  { label: "Profile", href: "/profile", icon: User },
+  {
+    label: "Profile",
+    href: "/profile",
+    icon: User,
+    children: [
+      { label: "Resume Analyser", href: "/profile/resume", icon: FileSearch },
+    ],
+  },
 ]
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [collapsed, setCollapsed] = useState(false)
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/"
-    return pathname.startsWith(href.split("?")[0])
+    const [path, query] = href.split("?")
+    if (!pathname.startsWith(path)) return false
+    if (!query) return true
+    const params = new URLSearchParams(query)
+    for (const [key, value] of params.entries()) {
+      if (searchParams.get(key) !== value) return false
+    }
+    return true
   }
 
   function isParentActive(item: NavItem) {

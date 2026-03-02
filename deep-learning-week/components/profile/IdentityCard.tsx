@@ -1,15 +1,14 @@
 "use client"
 
-import { useState } from "react"
-import { MapPin, Clock, Edit2, TrendingUp } from "lucide-react"
+import { useState, useEffect } from "react"
+import { MapPin, Clock, Pencil } from "lucide-react"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
-import { profileIdentity, masteryData, tradingSessions, userProfile } from "@/lib/mock"
+import { profileIdentity } from "@/lib/mock"
+import { useAuth } from "@/contexts/AuthContext"
 import type { TrackBadge } from "@/lib/types"
 
 const allTracks: TrackBadge[] = ["Interview Prep", "Research Track", "Trading Track"]
@@ -21,22 +20,59 @@ const trackVariant: Record<TrackBadge, string> = {
 }
 
 export function IdentityCard() {
-  const [tracks, setTracks] = useState<TrackBadge[]>(profileIdentity.tracks)
-  const [identity, setIdentity] = useState(profileIdentity)
-  const [editDraft, setEditDraft] = useState(profileIdentity)
+  const { user } = useAuth()
+
+  const fromAuth = {
+    name:               user?.name               ?? profileIdentity.name,
+    email:              user?.email              ?? profileIdentity.email,
+    avatar:             user?.avatar             ?? profileIdentity.avatar,
+    school:             user?.school             ?? profileIdentity.school,
+    graduationTimeline: user?.graduationTimeline ?? profileIdentity.graduationTimeline,
+    location:           user?.location           ?? profileIdentity.location,
+    timezone:           user?.timezone           ?? profileIdentity.timezone,
+    tracks:             (user?.tracks as TrackBadge[]) ?? profileIdentity.tracks,
+  }
+
+  const [identity, setIdentity] = useState(fromAuth)
+  const [tracks, setTracks] = useState<TrackBadge[]>(fromAuth.tracks)
+  const [editDraft, setEditDraft] = useState(fromAuth)
+  const [editTracks, setEditTracks] = useState<TrackBadge[]>(fromAuth.tracks)
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  const masteryAvg = Math.round(masteryData.reduce((s, m) => s + m.score, 0) / masteryData.length)
-  const sessions30d = tradingSessions.filter(s => {
-    const d = new Date(s.timestamp)
-    return (Date.now() - d.getTime()) < 30 * 24 * 60 * 60 * 1000
-  }).length
+  // Sync when auth user loads (it starts null, then resolves from DB)
+  useEffect(() => {
+    if (!user) return
+    const updated = {
+      name:               user.name,
+      email:              user.email,
+      avatar:             user.avatar,
+      school:             user.school,
+      graduationTimeline: user.graduationTimeline,
+      location:           user.location,
+      timezone:           user.timezone,
+      tracks:             user.tracks as TrackBadge[],
+    }
+    setIdentity(updated)
+    setTracks(updated.tracks)
+  }, [user])
 
   const toggleTrack = (t: TrackBadge) =>
     setTracks(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
 
+  const toggleEditTrack = (t: TrackBadge) =>
+    setEditTracks(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
+
+  const handleSheetOpenChange = (open: boolean) => {
+    setSheetOpen(open)
+    if (open) {
+      setEditDraft(identity)
+      setEditTracks(tracks)
+    }
+  }
+
   const saveEdit = () => {
     setIdentity(editDraft)
+    setTracks(editTracks)
     setSheetOpen(false)
   }
 
@@ -55,38 +91,46 @@ export function IdentityCard() {
               <p className="text-xs text-muted-foreground">{identity.school} · {identity.graduationTimeline}</p>
             </div>
           </div>
-          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+          <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7 -mt-1 -mr-1">
-                <Edit2 className="h-3.5 w-3.5" />
+                <Pencil className="h-3.5 w-3.5" />
               </Button>
             </SheetTrigger>
-            <SheetContent className="w-[360px]">
+            <SheetContent className="w-[380px] sm:max-w-[380px]">
               <SheetHeader>
                 <SheetTitle className="text-base">Edit Identity</SheetTitle>
               </SheetHeader>
-              <div className="space-y-3 py-4">
+              <div className="px-4 pb-4 space-y-4 overflow-y-auto">
                 {(["name", "school", "graduationTimeline", "location", "timezone"] as const).map(field => (
-                  <div key={field} className="space-y-1">
+                  <div key={field} className="space-y-1.5">
                     <label className="text-xs text-muted-foreground capitalize">{field.replace(/([A-Z])/g, " $1")}</label>
                     <Input
-                      className="h-8 text-sm"
+                      className="h-9 text-sm"
                       value={editDraft[field]}
                       onChange={e => setEditDraft(prev => ({ ...prev, [field]: e.target.value }))}
                     />
                   </div>
                 ))}
-                <Separator />
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">GitHub URL</label>
-                  <Input className="h-8 text-sm" placeholder="https://github.com/..." />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs text-muted-foreground">LinkedIn URL</label>
-                  <Input className="h-8 text-sm" placeholder="https://linkedin.com/in/..." />
+                <div className="border-t border-border pt-4 space-y-2">
+                  <label className="text-xs text-muted-foreground">Tracks</label>
+                  <div className="flex flex-wrap gap-2">
+                    {allTracks.map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => toggleEditTrack(t)}
+                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-opacity ${
+                          trackVariant[t]
+                        } ${editTracks.includes(t) ? "opacity-100" : "opacity-30"}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <SheetFooter>
+              <SheetFooter className="border-t border-border">
                 <Button variant="outline" size="sm" onClick={() => setSheetOpen(false)}>Cancel</Button>
                 <Button size="sm" onClick={saveEdit}>Save</Button>
               </SheetFooter>
@@ -114,27 +158,6 @@ export function IdentityCard() {
             >
               {t}
             </button>
-          ))}
-        </div>
-
-        <Separator />
-
-        {/* Quick stats */}
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { label: "Streak", value: `${userProfile.streak}d`, icon: "🔥" },
-            { label: "Avg mastery", value: `${masteryAvg}`, icon: <TrendingUp className="h-3 w-3 text-emerald-500" /> },
-            { label: "Sessions (30d)", value: `${sessions30d}`, icon: "📊" },
-          ].map(s => (
-            <div key={s.label} className="text-center space-y-0.5">
-              <div className="flex items-center justify-center gap-1">
-                {typeof s.icon === "string"
-                  ? <span className="text-sm">{s.icon}</span>
-                  : s.icon}
-                <span className="text-sm font-semibold tabular-nums">{s.value}</span>
-              </div>
-              <p className="text-[10px] text-muted-foreground">{s.label}</p>
-            </div>
           ))}
         </div>
       </CardContent>

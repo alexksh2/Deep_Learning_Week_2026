@@ -131,16 +131,33 @@ export async function getPositions() {
   return alpacaFetch<AlpacaPosition[]>("/v2/positions")
 }
 
-export async function getBars(symbol: string, timeframe: string, limit = 100) {
-  return alpacaFetch<AlpacaBarsResponse>(
-    `/v2/stocks/${symbol}/bars?timeframe=${timeframe}&limit=${limit}&feed=iex&sort=asc`,
-  )
+export async function getBars(
+  symbol: string,
+  timeframe: string,
+): Promise<AlpacaBarsResponse> {
+  // No end param — let Alpaca return up to the last available data point.
+  // Sending a recent end date triggers a 403 on the free SIP plan.
+  const start = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+  const allBars: AlpacaBar[] = []
+  let pageToken: string | null = null
+
+  do {
+    const tokenParam: string = pageToken ? `&page_token=${pageToken}` : ""
+    const page: AlpacaBarsResponse = await alpacaFetch<AlpacaBarsResponse>(
+      `/v2/stocks/${symbol}/bars?timeframe=${timeframe}&limit=10000&start=${start}&sort=asc${tokenParam}`,
+    )
+    allBars.push(...(page.bars ?? []))
+    pageToken = page.next_page_token
+  } while (pageToken)
+
+  return { bars: allBars, symbol, next_page_token: null }
 }
 
 // Map Alpaca timeframe strings to Alpaca API timeframe param
 export const TIMEFRAME_MAP: Record<string, string> = {
-  "1m": "1Min",
-  "5m": "5Min",
+  "1m":  "1Min",
+  "5m":  "5Min",
   "15m": "15Min",
-  "1h": "1Hour",
+  "1h":  "1Hour",
+  "1d":  "1Day",
 }

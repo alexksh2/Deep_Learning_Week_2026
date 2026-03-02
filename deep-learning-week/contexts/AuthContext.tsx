@@ -1,117 +1,92 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
-import type { TrackBadge, TargetRole, TargetTimeline, LearningStylePref } from "@/lib/types"
-
-export interface AuthUser {
-  name: string
-  email: string
-  password: string
-  avatar: string
-  school: string
-  graduationTimeline: string
-  location: string
-  timezone: string
-  tracks: TrackBadge[]
-  targetRole: TargetRole
-  targetTimeline: TargetTimeline
-  targetFirms: string[]
-  preferResearchHeavy: boolean
-  preferLowLatency: boolean
-  preferDiscretionary: boolean
-  learningStyle: LearningStylePref
-  hoursPerWeek: number
-  availableDays: string[]
-  northStar: string
-}
+import type { AuthActionResult, AuthUser } from "@/lib/auth-types"
 
 interface AuthContextValue {
   user: AuthUser | null
   isLoading: boolean
-  login: (email: string, password: string) => { success: boolean; error?: string }
-  register: (user: AuthUser) => { success: boolean; error?: string }
+  login: (email: string, password: string) => Promise<AuthActionResult>
+  register: (user: AuthUser) => Promise<AuthActionResult>
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-// qlos_user   → stored account record (persists across logout so demo creds stay)
-// qlos_session → active session email (cleared on logout)
-const ACCOUNT_KEY = "qlos_user"
 const SESSION_KEY = "qlos_session"
-
-const DEMO_USER: AuthUser = {
-  name: "Alex Chen",
-  email: "alex.chen@quant.dev",
-  password: "demo1234",
-  avatar: "AC",
-  school: "MIT",
-  graduationTimeline: "Already graduated",
-  location: "New York, NY",
-  timezone: "America/New_York",
-  tracks: ["Interview Prep", "Research Track"],
-  targetRole: "Quant Research",
-  targetTimeline: "3-6 months",
-  targetFirms: ["Citadel", "Two Sigma", "D.E. Shaw"],
-  preferResearchHeavy: true,
-  preferLowLatency: false,
-  preferDiscretionary: false,
-  learningStyle: "theory-first",
-  hoursPerWeek: 15,
-  availableDays: ["Mon", "Tue", "Wed", "Thu", "Fri"],
-  northStar: "Land a quant researcher role at a top systematic fund",
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    try {
-      // Seed demo account if no account exists yet
-      if (!localStorage.getItem(ACCOUNT_KEY)) {
-        localStorage.setItem(ACCOUNT_KEY, JSON.stringify(DEMO_USER))
-      }
-      // Restore active session if one exists
+    let active = true
+
+    async function restoreSession() {
       const sessionEmail = localStorage.getItem(SESSION_KEY)
-      if (sessionEmail) {
-        const stored = localStorage.getItem(ACCOUNT_KEY)
-        if (stored) {
-          const account: AuthUser = JSON.parse(stored)
-          if (account.email === sessionEmail) {
-            setUser(account)
-          }
-        }
+      if (!sessionEmail) {
+        if (active) setIsLoading(false)
+        return
       }
-    } catch {
-      // ignore parse errors
+
+      try {
+        const res = await fetch(`/api/auth/user?email=${encodeURIComponent(sessionEmail)}`)
+        if (!res.ok) {
+          localStorage.removeItem(SESSION_KEY)
+          if (active) setUser(null)
+        } else {
+          const data = (await res.json()) as { user: AuthUser }
+          if (active) setUser(data.user)
+        }
+      } catch {
+        localStorage.removeItem(SESSION_KEY)
+        if (active) setUser(null)
+      } finally {
+        if (active) setIsLoading(false)
+      }
     }
-    setIsLoading(false)
+
+    restoreSession()
+    return () => {
+      active = false
+    }
   }, [])
 
-  function login(email: string, password: string): { success: boolean; error?: string } {
+  async function login(email: string, password: string): Promise<AuthActionResult> {
     try {
-      const stored = localStorage.getItem(ACCOUNT_KEY)
-      if (!stored) return { success: false, error: "No account found. Please register." }
-      const account: AuthUser = JSON.parse(stored)
-      if (account.email !== email) return { success: false, error: "Invalid email or password." }
-      if (account.password !== password) return { success: false, error: "Invalid email or password." }
-      localStorage.setItem(SESSION_KEY, email)
-      setUser(account)
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+      const data = (await res.json()) as { user?: AuthUser; error?: string }
+      if (!res.ok || !data.user) {
+        return { success: false, error: data.error ?? "Login failed." }
+      }
+      localStorage.setItem(SESSION_KEY, data.user.email)
+      setUser(data.user)
       return { success: true }
     } catch {
-      return { success: false, error: "Something went wrong." }
+      return { success: false, error: "Unable to sign in right now." }
     }
   }
 
-  function register(newUser: AuthUser): { success: boolean; error?: string } {
+  async function register(newUser: AuthUser): Promise<AuthActionResult> {
     try {
-      localStorage.setItem(ACCOUNT_KEY, JSON.stringify(newUser))
-      localStorage.setItem(SESSION_KEY, newUser.email)
-      setUser(newUser)
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newUser),
+      })
+      const data = (await res.json()) as { user?: AuthUser; error?: string }
+      if (!res.ok || !data.user) {
+        return { success: false, error: data.error ?? "Registration failed." }
+      }
+      localStorage.setItem(SESSION_KEY, data.user.email)
+      setUser(data.user)
       return { success: true }
     } catch {
-      return { success: false, error: "Failed to save account." }
+      return { success: false, error: "Unable to register right now." }
     }
   }
 

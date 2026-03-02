@@ -1,0 +1,41 @@
+query,label
+What is a Sharpe ratio?,simple
+Define alpha in portfolio management.,simple
+What does PnL stand for?,simple
+What is a market order?,simple
+What is the difference between bid and ask?,simple
+What is a stop-loss?,simple
+What is volatility?,simple
+What is a futures contract?,simple
+What is leverage in trading?,simple
+What is a limit order?,simple
+Explain mean reversion in simple terms.,simple
+What is a moving average?,simple
+What is beta in finance?,simple
+What is arbitrage?,simple
+What does going long mean?,simple
+Explain how a momentum strategy works and when it tends to break down.,medium
+Compare VWAP and TWAP execution algorithms and when to use each.,medium
+How does pairs trading work and what are the key risks?,medium
+Explain the Fama-French three-factor model.,medium
+What is the Kelly criterion and how do you apply it to position sizing?,medium
+Describe the difference between realized and implied volatility.,medium
+How does a statistical arbitrage strategy handle regime changes?,medium
+Explain how interest rate changes affect equity valuations.,medium
+What are the main differences between time-series momentum and cross-sectional momentum?,medium
+How do you construct a dollar-neutral portfolio?,medium
+Explain cointegration and how it differs from correlation in pairs trading.,medium
+What is the Kalman filter and how is it used in quantitative finance?,medium
+Describe how to backtest a simple mean-reversion strategy on daily data.,medium
+What is a factor model and how do you interpret factor loadings?,medium
+How does slippage affect high-frequency strategies differently than daily strategies?,medium
+Derive the Black-Scholes formula and explain each term's intuition. What assumptions break in practice and how do practitioners compensate?,complex
+Design a complete alpha generation pipeline for a medium-frequency equity strategy including data sourcing, feature engineering, model selection, and risk management.,complex
+Explain how market microstructure affects the implementation shortfall of large institutional orders. How would you model and minimize this?,complex
+How would you build a regime detection model using HMMs, and how would you use the regime signal to adapt a trend-following strategy?,complex
+Construct a risk parity portfolio from scratch. What optimization problem are you solving and what are the tradeoffs versus mean-variance optimization?,complex
+Explain the full mathematics behind Kalman filter-based pairs trading, including how you handle non-stationarity and parameter drift.,complex
+How do you build a latency-arbitrage system? What are the technical and regulatory constraints?,complex
+Design a backtesting framework that correctly handles look-ahead bias, survivorship bias, and transaction costs for a multi-asset strategy.,complex
+Explain the mathematics of reinforcement learning applied to optimal execution. What is the Almgren-Chriss model and how does RL extend it?,complex
+How would you detect and adapt to a distributional shift in your alpha model's training data in a live trading environment?,complex

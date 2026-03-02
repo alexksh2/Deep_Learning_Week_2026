@@ -1,0 +1,22 @@
+
+  lib/auth-db.ts
+  - Added conversations table (CREATE TABLE IF NOT EXISTS) inside getDb()
+  - Added getConversations(email) — fetches all conversations for a user, ordered by updated_at DESC
+  - Added upsertConversation(email, conv) — INSERT OR REPLACE with messages stored as JSON
+  - Added deleteConversationById(id, email) — scoped delete by both ID and user email
+
+  app/api/coaching/conversations/route.ts (new)
+  - GET ?email= → returns { conversations } for the user
+  - POST { email, conversation } → upserts the conversation
+
+  app/api/coaching/conversations/[id]/route.ts (new)
+  - DELETE ?email= → deletes the conversation by ID + email
+
+  app/coaching/page.tsx
+  - Removed STORAGE_KEY constant and both localStorage effects
+  - Added useEffect on user?.email to load conversations from DB on mount
+  - Added useEffect on isStreaming that fires on true → false transition to upsert the active conversation (avoids
+   per-token DB writes during streaming)
+  - newConversation() now POSTs the new (empty) conversation immediately
+  - deleteConversation() now DELETEs via API instead of writing localStorage
+  - Footer text updated to "Conversations are saved to your account"

@@ -5,11 +5,21 @@ import { Download, Upload, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
+import { useAuth } from "@/contexts/AuthContext"
+import { downloadProfileExport } from "@/lib/profile-export"
 
 export function ProfileHeader() {
+  const { user } = useAuth()
   const [uploadOpen, setUploadOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [mockFile, setMockFile] = useState<string | null>(null)
+  const [exportDone, setExportDone] = useState(false)
+
+  const handleExport = () => {
+    downloadProfileExport(user)
+    setExportDone(true)
+    window.setTimeout(() => setExportDone(false), 2000)
+  }
 
   return (
     <>
@@ -21,9 +31,9 @@ export function ProfileHeader() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="gap-1.5 text-xs h-8">
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs h-8" onClick={handleExport}>
             <Download className="h-3.5 w-3.5" />
-            Export Profile
+            {exportDone ? "Exported!" : "Export Profile"}
           </Button>
           <Button size="sm" className="gap-1.5 text-xs h-8" onClick={() => setUploadOpen(true)}>
             <Upload className="h-3.5 w-3.5" />
@@ -50,7 +60,7 @@ export function ProfileHeader() {
             className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
               dragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
             }`}
-            onClick={() => setMockFile("alex-chen-resume-2026.pdf")}
+            onClick={() => setMockFile("alex-khoo-resume-2026.pdf")}
           >
             {mockFile ? (
               <div className="flex items-center justify-center gap-2">

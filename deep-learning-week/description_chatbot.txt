@@ -1,0 +1,29 @@
+                                                                                                        
+⏺ The Radix ScrollArea component needs min-h-0 in flex column layouts otherwise it expands past its
+  container instead of scrolling. Easiest fix is swap it for a plain div with overflow-y-auto:          
+                                                                                                        
+⏺ Update(app/coaching/page.tsx)                                                                         
+  ⎿  Added 1 line, removed 1 line                                                                       
+      610            )}                                                                                 
+      611                                                                                               
+      612            {/* Messages */}                                                                   
+      613 -          <ScrollArea className="flex-1 px-4">                                               
+      613 +          <div className="flex-1 min-h-0 overflow-y-auto px-4">                              
+      614              <div className="mx-auto max-w-2xl space-y-4 py-6">                               
+      615                                                                                               
+      616                {apiError && (                                                                 
+                                                                                                        
+⏺ Update(app/coaching/page.tsx)                                                                         
+  ⎿  Added 1 line, removed 1 line                                                                       
+      666                )}                                                                             
+      667                <div ref={messagesEndRef} />                                                   
+      668              </div>                                                                           
+      669 -          </ScrollArea>                                                                      
+      669 +          </div>                                                                             
+      670                                                                                               
+      671            {/* Input area */}                                                                 
+      672            <div className="border-t border-border px-4 py-3">                                 
+                                                                                                        
+⏺ The key is min-h-0 — in a flex-col container, flex children default to min-height: auto which lets    
+  them grow infinitely. min-h-0 overrides that so the div stays constrained to its flex allocation and  
+  scrolls within it instead. 1

@@ -1,19 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   Tooltip,
   TooltipContent,
@@ -25,11 +17,11 @@ import { LineChart, Line, ResponsiveContainer } from "recharts"
 import {
   todaysPlan,
   masteryData,
-  activityLog,
   coachingInsights,
   getTopicLabel,
 } from "@/lib/mock"
 import type { MasteryTrend, MasteryBadge } from "@/lib/types"
+import { useNotifications, type AppNotification, type NotificationCategory } from "@/contexts/NotificationContext"
 
 function TrendIcon({ trend }: { trend: MasteryTrend }) {
   if (trend === "up") return <TrendingUp className="h-3.5 w-3.5 text-chart-2" />
@@ -51,19 +43,51 @@ function MasteryBadgeEl({ badge }: { badge: MasteryBadge }) {
   )
 }
 
-function formatTime(isoString: string) {
-  const d = new Date(isoString)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffH = Math.floor(diffMs / 3600000)
-  if (diffH < 1) return "< 1h ago"
-  if (diffH < 24) return `${diffH}h ago`
-  const diffD = Math.floor(diffH / 24)
-  return `${diffD}d ago`
+function formatNotificationTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  const deltaMs = Date.now() - date.getTime()
+  const minute = 60 * 1000
+  const hour = 60 * minute
+
+  if (deltaMs < hour) {
+    const mins = Math.max(1, Math.floor(deltaMs / minute))
+    return `${mins}m ago`
+  }
+
+  if (deltaMs < 24 * hour) {
+    return `${Math.floor(deltaMs / hour)}h ago`
+  }
+
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+function categoryLabel(category: NotificationCategory) {
+  if (category === "trade") return "Trade"
+  if (category === "learning") return "Learning"
+  return "System"
+}
+
+function categoryTone(category: NotificationCategory) {
+  if (category === "trade") return "border-chart-2/30 bg-chart-2/10 text-chart-2"
+  if (category === "learning") return "border-chart-1/30 bg-chart-1/10 text-chart-1"
+  return "border-border bg-muted/70 text-muted-foreground"
+}
+
+function sourceLabel(source: AppNotification["source"]) {
+  if (source === "spaced-rep") return "Spaced Rep"
+  if (source === "quiz") return "Quiz"
+  if (source === "course") return "Course"
+  if (source === "trade") return "Trade"
+  if (source === "review") return "Review"
+  return "System"
 }
 
 export default function DashboardPage() {
   const [plan, setPlan] = useState(todaysPlan)
+  const { notifications, markAsRead } = useNotifications()
+
+  const recentNotifications = useMemo(() => notifications.slice(0, 12), [notifications])
 
   function togglePlan(id: string) {
     setPlan((prev) =>
@@ -214,34 +238,39 @@ export default function DashboardPage() {
         <div>
           <h2 className="text-sm font-medium mb-3">Recent Activity</h2>
           <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-24">Time</TableHead>
-                  <TableHead className="w-20">Type</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="w-28">Outcome</TableHead>
-                  <TableHead>Notes</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {activityLog.map((event) => (
-                  <TableRow key={event.id}>
-                    <TableCell className="text-xs font-mono text-muted-foreground">
-                      {formatTime(event.time)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-[10px] font-mono uppercase">
-                        {event.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">{event.title}</TableCell>
-                    <TableCell className="text-sm font-mono">{event.outcome}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{event.notes}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <CardContent className="space-y-2 p-3">
+              {recentNotifications.length === 0 ? (
+                <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                  No recent activity yet.
+                </div>
+              ) : (
+                recentNotifications.map((item) => (
+                  <Link
+                    key={item.id}
+                    href={item.href}
+                    onClick={() => markAsRead(item.id)}
+                    className={`block rounded-md border px-3 py-2 transition-colors hover:bg-muted/60 ${
+                      item.read ? "border-transparent bg-transparent" : "border-border bg-muted/30"
+                    }`}
+                  >
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${categoryTone(item.category)}`}>
+                          {categoryLabel(item.category)}
+                        </Badge>
+                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                          {sourceLabel(item.source)}
+                        </Badge>
+                        {!item.read && <span className="h-1.5 w-1.5 rounded-full bg-foreground/80" />}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">{formatNotificationTime(item.createdAt)}</span>
+                    </div>
+                    <p className="text-sm font-medium leading-tight">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{item.body}</p>
+                  </Link>
+                ))
+              )}
+            </CardContent>
           </Card>
         </div>
       </div>

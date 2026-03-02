@@ -1,5 +1,5 @@
 import type {
-  Topic, TopicId, TopicMastery, Course, Quiz, SRCard,
+  Topic, TopicId, TopicMastery, Course, Quiz, QuizAttempt, SRCard,
   TradingSession, BehavioralMetrics, CoachingInsight,
   Recommendation, ActivityEvent, PlanItem, PricePoint,
   UserProfile, TradingReadiness, TradeOrder, Position,
@@ -7,6 +7,8 @@ import type {
   CareerIntentData, AspirationsData, SkillEntry, ReadinessTrend,
   InterviewPack, ProfileRecommendation, ProfileSettings,
 } from "./types"
+import { getQuestionPoolForQuiz } from "./quiz-question-bank"
+import type { StoredQuizProgress } from "./quiz-progress"
 
 // ── Topics ──
 export const topics: Topic[] = [
@@ -120,13 +122,7 @@ export const quizzes: Quiz[] = [
       { date: "2026-02-25", score: 72, timeSeconds: 780, mistakeBreakdown: { Conceptual: 2, Careless: 1, Implementation: 0 } },
       { date: "2026-02-20", score: 65, timeSeconds: 840, mistakeBreakdown: { Conceptual: 3, Careless: 1, Implementation: 0 } },
     ],
-    questions: [
-      { id: "q1-1", text: "Given P(A) = 0.6, P(B|A) = 0.3, and P(B|A') = 0.5, what is P(A|B)?", type: "multiple-choice", options: ["0.310", "0.473", "0.529", "0.391"], correctAnswer: "0.473", explanation: "By Bayes: P(A|B) = P(B|A)P(A) / [P(B|A)P(A) + P(B|A')P(A')] = 0.18/0.38 = 0.473", topicTags: ["probability"], difficulty: "Intermediate" },
-      { id: "q1-2", text: "A fair die is rolled twice. What is P(sum = 7 | first roll = 3)?", type: "multiple-choice", options: ["1/6", "1/36", "6/36", "2/6"], correctAnswer: "1/6", explanation: "Given first roll is 3, second must be 4 for sum=7. P(second=4) = 1/6.", topicTags: ["probability"], difficulty: "Beginner" },
-      { id: "q1-3", text: "What is the key insight of the tower property of conditional expectation?", type: "short-answer", correctAnswer: "E[E[X|Y]] = E[X]", explanation: "The tower property (law of iterated expectations) states that coarsening information averages out to the unconditional expectation.", topicTags: ["probability"], difficulty: "Intermediate" },
-      { id: "q1-4", text: "In a market with 70% of days being 'trending' and 30% 'mean-reverting', a signal fires with P(signal|trending)=0.8 and P(signal|MR)=0.2. What is P(trending|signal)?", type: "multiple-choice", options: ["0.800", "0.903", "0.700", "0.560"], correctAnswer: "0.903", explanation: "Bayes: 0.8*0.7 / (0.8*0.7 + 0.2*0.3) = 0.56/0.62 = 0.903", topicTags: ["probability", "time-series"], difficulty: "Advanced" },
-      { id: "q1-5", text: "What distinguishes P(A|B) from P(A,B)?", type: "short-answer", correctAnswer: "P(A|B) is the probability of A given B occurred, while P(A,B) is the joint probability of both occurring", explanation: "Conditional probability normalizes by the conditioning event: P(A|B) = P(A,B)/P(B).", topicTags: ["probability"], difficulty: "Beginner" },
-    ],
+    questions: getQuestionPoolForQuiz("q-cond-prob"),
   },
   {
     id: "q-garch",
@@ -136,11 +132,7 @@ export const quizzes: Quiz[] = [
     timeLimitMinutes: 20,
     status: "not-started",
     attempts: [],
-    questions: [
-      { id: "q2-1", text: "What is the unconditional variance of a GARCH(1,1) model with omega=0.00001, alpha=0.05, beta=0.93?", type: "multiple-choice", options: ["0.0005", "0.00050", "0.0001", "0.01"], correctAnswer: "0.0005", explanation: "sigma^2 = omega / (1 - alpha - beta) = 0.00001 / 0.02 = 0.0005", topicTags: ["time-series"], difficulty: "Advanced" },
-      { id: "q2-2", text: "What does the condition alpha + beta < 1 ensure in GARCH(1,1)?", type: "short-answer", correctAnswer: "Covariance stationarity", explanation: "When alpha + beta < 1, shocks to variance decay over time and the process has a finite unconditional variance.", topicTags: ["time-series", "statistics"], difficulty: "Intermediate" },
-      { id: "q2-3", text: "How does EGARCH differ from standard GARCH?", type: "short-answer", correctAnswer: "EGARCH models the log of variance and captures leverage/asymmetry effects", explanation: "EGARCH allows negative shocks to have a different impact than positive ones (leverage effect) and doesn't require positivity constraints.", topicTags: ["time-series"], difficulty: "Advanced" },
-    ],
+    questions: getQuestionPoolForQuiz("q-garch"),
   },
   {
     id: "q-execution",
@@ -152,11 +144,7 @@ export const quizzes: Quiz[] = [
     attempts: [
       { date: "2026-02-27", score: 55, timeSeconds: 600, mistakeBreakdown: { Conceptual: 1, Careless: 2, Implementation: 1 } },
     ],
-    questions: [
-      { id: "q3-1", text: "When is a limit order preferred over a market order?", type: "multiple-choice", options: ["When speed is critical", "When spread is wide and urgency is low", "During high volatility", "When the order book is thin"], correctAnswer: "When spread is wide and urgency is low", explanation: "Limit orders avoid crossing the spread, reducing transaction costs when immediacy is not required.", topicTags: ["execution"], difficulty: "Beginner" },
-      { id: "q3-2", text: "What is implementation shortfall?", type: "short-answer", correctAnswer: "The difference between the paper return (decision price) and the actual return after all execution costs", explanation: "IS captures the total cost of implementing a trading decision, including market impact, timing cost, and opportunity cost.", topicTags: ["execution", "microstructure"], difficulty: "Intermediate" },
-      { id: "q3-3", text: "In the Almgren-Chriss model, what tradeoff does the trader optimize?", type: "multiple-choice", options: ["Speed vs accuracy", "Market impact vs timing risk", "Profit vs loss", "Latency vs throughput"], correctAnswer: "Market impact vs timing risk", explanation: "The Almgren-Chriss framework optimizes the tradeoff between the permanent/temporary market impact of trading quickly vs the variance (timing risk) of trading slowly.", topicTags: ["execution", "optimization"], difficulty: "Advanced" },
-    ],
+    questions: getQuestionPoolForQuiz("q-execution"),
   },
   {
     id: "q-risk-measures",
@@ -166,10 +154,7 @@ export const quizzes: Quiz[] = [
     timeLimitMinutes: 15,
     status: "not-started",
     attempts: [],
-    questions: [
-      { id: "q4-1", text: "What is the key limitation of VaR as a risk measure?", type: "multiple-choice", options: ["It's too conservative", "It doesn't capture tail risk beyond the threshold", "It requires normal distribution", "It only works for equities"], correctAnswer: "It doesn't capture tail risk beyond the threshold", explanation: "VaR tells you the minimum loss at a confidence level but nothing about the severity of losses beyond that threshold.", topicTags: ["risk"], difficulty: "Intermediate" },
-      { id: "q4-2", text: "Why is Expected Shortfall (CVaR) considered a coherent risk measure but VaR is not?", type: "short-answer", correctAnswer: "ES satisfies subadditivity while VaR does not", explanation: "ES satisfies all four coherence axioms (monotonicity, translation invariance, positive homogeneity, subadditivity). VaR fails subadditivity, meaning diversification can appear to increase risk.", topicTags: ["risk", "statistics"], difficulty: "Advanced" },
-    ],
+    questions: getQuestionPoolForQuiz("q-risk-measures"),
   },
 ]
 
@@ -352,9 +337,9 @@ export const mockPositions: Position[] = [
 
 // ── User Profile ──
 export const userProfile: UserProfile = {
-  name: "Alex Chen",
-  email: "alex.chen@quant.dev",
-  avatar: "AC",
+  name: "Alex Khoo",
+  email: "alexkhoo@gmail.com",
+  avatar: "AK",
   streak: 12,
   dailyStudyTarget: 45,
   tradingFrequency: "3x-week",
@@ -405,27 +390,27 @@ export function getTopicLabel(id: TopicId): string {
 
 // ── Profile ──
 export const profileIdentity: ProfileIdentity = {
-  name: "Alex Chen",
-  email: "alex.chen@quant.dev",
-  avatar: "AC",
-  school: "MIT",
+  name: "Alex Khoo",
+  email: "alexkhoo@gmail.com",
+  avatar: "AK",
+  school: "NTU",
   graduationTimeline: "May 2026",
-  location: "Cambridge, MA",
-  timezone: "EST (UTC-5)",
+  location: "Singapore",
+  timezone: "SGT (UTC+8)",
   tracks: ["Interview Prep", "Trading Track"],
 }
 
 export const resumeMetadata: ResumeMetadata = {
-  fileName: "alex-chen-resume-2026.pdf",
+  fileName: "alex-khoo-resume-2026.pdf",
   lastUpdated: "2026-02-15",
   fileSize: "187 KB",
 }
 
 export const portfolioLinks: PortfolioLink[] = [
-  { id: "pl-1", label: "GitHub", url: "https://github.com/alexchen", category: "GitHub", visible: true },
-  { id: "pl-2", label: "Personal Site", url: "https://alexchen.dev", category: "Website", visible: true },
-  { id: "pl-3", label: "LinkedIn", url: "https://linkedin.com/in/alexchen", category: "LinkedIn", visible: false },
-  { id: "pl-4", label: "Vol Surface Pricer", url: "https://github.com/alexchen/vol-surface", category: "Project", visible: true },
+  { id: "pl-1", label: "GitHub", url: "https://github.com/alexksh2", category: "GitHub", visible: true },
+  { id: "pl-2", label: "Personal Website", url: "https://alexksh2.github.io/", category: "Website", visible: true },
+  { id: "pl-3", label: "LinkedIn", url: "https://www.linkedin.com/in/alex-khoo-shien-how", category: "LinkedIn", visible: true },
+  { id: "pl-4", label: "Chinese Financial Markets", url: "https://github.com/alexksh2/Chinese_Financial_Markets_ECON170039", category: "Project", visible: true },
 ]
 
 export const resumeHighlights: ResumeHighlight[] = [
@@ -454,35 +439,253 @@ export const aspirationsData: AspirationsData = {
   riskTolerancePref: "balanced",
 }
 
-export const skillMatrix: SkillEntry[] = [
+type SkillProgressSource =
+  | { type: "quiz"; quizId: string; label: string; fallbackTopicId?: TopicId }
+  | { type: "course"; courseId: string; label: string }
+  | { type: "courseLesson"; courseId: string; lessonId: string; label: string }
+  | { type: "mastery"; topicId: TopicId; label: string }
+  | { type: "behavior"; metric: "regimeAwareness" | "slippageSensitivity" | "stopLossDiscipline"; label: string; sessionId?: string }
+  | { type: "activityScore"; activityId: string; label: string }
+  | { type: "resumeHighlight"; highlightId: string; label: string }
+  | { type: "selfRatingBaseline" }
+
+type SkillTemplate = Omit<SkillEntry, "measuredScore" | "evidence"> & {
+  source: SkillProgressSource
+}
+
+type SkillProgressOptions = {
+  quizProgressById?: Record<string, Pick<StoredQuizProgress, "attempts">>
+  useQuizProgressOnly?: boolean
+}
+
+function clampScore(score: number): number {
+  return Math.max(0, Math.min(100, Math.round(score)))
+}
+
+export function getSkillBadgeFromScore(score: number): SkillEntry["badge"] {
+  const normalized = clampScore(score)
+  if (normalized > 70) return "Verified"
+  if (normalized >= 50) return "Needs Evidence"
+  return "At Risk"
+}
+
+function baselineFromSelfRating(selfRating: number): number {
+  return clampScore(selfRating * 10 + 5)
+}
+
+function getLatestAttemptScore(attempts: QuizAttempt[]): number | null {
+  if (attempts.length === 0) return null
+
+  const latestAttempt = attempts.reduce((latest, attempt) =>
+    Date.parse(attempt.date) > Date.parse(latest.date) ? attempt : latest,
+  )
+  return clampScore(latestAttempt.score)
+}
+
+function getLatestQuizScore(quizId: string, options: SkillProgressOptions = {}): number | null {
+  const attemptsFromProgress = options.quizProgressById?.[quizId]?.attempts
+  if (Array.isArray(attemptsFromProgress)) {
+    return getLatestAttemptScore(attemptsFromProgress)
+  }
+
+  if (options.useQuizProgressOnly) return null
+
+  const quiz = quizzes.find((item) => item.id === quizId)
+  if (!quiz) return null
+  return getLatestAttemptScore(quiz.attempts)
+}
+
+function parseFractionScore(text: string): number | null {
+  const match = text.match(/(\d+)\s*\/\s*(\d+)/)
+  if (!match) return null
+
+  const numerator = Number(match[1])
+  const denominator = Number(match[2])
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null
+  return clampScore((numerator / denominator) * 100)
+}
+
+function resolveSkillProgress(skill: SkillTemplate, options: SkillProgressOptions = {}): Pick<SkillEntry, "measuredScore" | "evidence"> {
+  const { source } = skill
+
+  if (source.type === "quiz") {
+    const quizScore = getLatestQuizScore(source.quizId, options)
+    if (quizScore !== null) {
+      return {
+        measuredScore: quizScore,
+        evidence: `Quiz: ${source.label} (${quizScore}%)`,
+      }
+    }
+
+    if (source.fallbackTopicId) {
+      const topicMastery = masteryData.find((item) => item.topicId === source.fallbackTopicId)
+      if (topicMastery) {
+        const fallbackScore = clampScore(topicMastery.score * 0.72)
+        return {
+          measuredScore: fallbackScore,
+          evidence: `Quiz: ${source.label} (not started); mastery baseline ${topicMastery.score}%`,
+        }
+      }
+    }
+
+    return {
+      measuredScore: 0,
+      evidence: `Quiz: ${source.label} (not started)`,
+    }
+  }
+
+  if (source.type === "course") {
+    const course = courses.find((item) => item.id === source.courseId)
+    if (!course) {
+      return {
+        measuredScore: baselineFromSelfRating(skill.selfRating),
+        evidence: `Course: ${source.label} (missing source)`,
+      }
+    }
+
+    return {
+      measuredScore: clampScore(course.progress),
+      evidence: `Course: ${source.label} (${course.progress}%)`,
+    }
+  }
+
+  if (source.type === "courseLesson") {
+    const course = courses.find((item) => item.id === source.courseId)
+    const lesson = course?.lessons.find((item) => item.id === source.lessonId)
+
+    if (!course || !lesson) {
+      return {
+        measuredScore: baselineFromSelfRating(skill.selfRating),
+        evidence: `Course: ${source.label} (missing source)`,
+      }
+    }
+
+    if (lesson.completed) {
+      return {
+        measuredScore: 100,
+        evidence: `Course: ${source.label} (completed)`,
+      }
+    }
+
+    return {
+      measuredScore: clampScore(course.progress * 0.75),
+      evidence: `Course: ${source.label} (not started)`,
+    }
+  }
+
+  if (source.type === "mastery") {
+    const topicMastery = masteryData.find((item) => item.topicId === source.topicId)
+    if (!topicMastery) {
+      return {
+        measuredScore: baselineFromSelfRating(skill.selfRating),
+        evidence: `Mastery: ${source.label} (no data)`,
+      }
+    }
+
+    return {
+      measuredScore: clampScore(topicMastery.score),
+      evidence: `Mastery: ${source.label} (${topicMastery.score}%)`,
+    }
+  }
+
+  if (source.type === "behavior") {
+    const score = clampScore(behavioralMetrics[source.metric])
+    const sessionSuffix = source.sessionId ? ` (${source.sessionId})` : ""
+    return {
+      measuredScore: score,
+      evidence: `Trading: ${source.label}${sessionSuffix} (${score}%)`,
+    }
+  }
+
+  if (source.type === "activityScore") {
+    const activity = activityLog.find((item) => item.id === source.activityId)
+    const parsedScore = activity ? parseFractionScore(activity.outcome) : null
+    if (activity && parsedScore !== null) {
+      return {
+        measuredScore: parsedScore,
+        evidence: `${source.label}: ${activity.outcome}`,
+      }
+    }
+
+    return {
+      measuredScore: baselineFromSelfRating(skill.selfRating),
+      evidence: `${source.label}: no scored evidence`,
+    }
+  }
+
+  if (source.type === "resumeHighlight") {
+    const highlight = resumeHighlights.find((item) => item.id === source.highlightId)
+    if (!highlight) {
+      return {
+        measuredScore: baselineFromSelfRating(skill.selfRating),
+        evidence: `Resume: ${source.label} (missing source)`,
+      }
+    }
+
+    const score = highlight.confirmed ? 75 : 40
+    return {
+      measuredScore: score,
+      evidence: `Resume: ${source.label} (${highlight.confirmed ? "confirmed" : "unconfirmed"})`,
+    }
+  }
+
+  return {
+    measuredScore: baselineFromSelfRating(skill.selfRating),
+    evidence: "No evidence yet",
+  }
+}
+
+const skillMatrixTemplates: SkillTemplate[] = [
   // Math & Probability
-  { id: "sk-1", category: "Math & Probability", skillName: "Bayes' Theorem & Conditional Prob", selfRating: 4, measuredScore: 78, evidence: "Quiz: Conditional Prob (78%)", evidenceType: "quiz", badge: "Verified", actionLink: "/learn/quiz/q-cond-prob" },
-  { id: "sk-2", category: "Math & Probability", skillName: "Stochastic Processes", selfRating: 3, measuredScore: 64, evidence: "Course: Prob Foundations (65%)", evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations" },
-  { id: "sk-3", category: "Math & Probability", skillName: "Martingales & Filtrations", selfRating: 2, measuredScore: 48, evidence: "Course: Lesson 5 not started", evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations" },
+  { id: "sk-1", category: "Math & Probability", skillName: "Bayes' Theorem & Conditional Prob", selfRating: 4, evidenceType: "quiz", badge: "Verified", actionLink: "/learn/quiz/q-cond-prob", source: { type: "quiz", quizId: "q-cond-prob", label: "Conditional Probability" } },
+  { id: "sk-2", category: "Math & Probability", skillName: "Stochastic Processes", selfRating: 3, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations", source: { type: "course", courseId: "c-prob-foundations", label: "Prob Foundations" } },
+  { id: "sk-3", category: "Math & Probability", skillName: "Martingales & Filtrations", selfRating: 2, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations", source: { type: "courseLesson", courseId: "c-prob-foundations", lessonId: "l5", label: "Lesson 5 (Martingales & Stopping Times)" } },
   // Statistics & Inference
-  { id: "sk-4", category: "Statistics & Inference", skillName: "Hypothesis Testing & p-values", selfRating: 5, measuredScore: 91, evidence: "Mastery: Statistics (91%)", evidenceType: "quiz", badge: "Verified", actionLink: "/learn" },
-  { id: "sk-5", category: "Statistics & Inference", skillName: "Bayesian Inference", selfRating: 3, measuredScore: 72, evidence: "SR cards: 7/8 correct", evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures" },
+  { id: "sk-4", category: "Statistics & Inference", skillName: "Hypothesis Testing & p-values", selfRating: 5, evidenceType: "quiz", badge: "Verified", actionLink: "/learn", source: { type: "mastery", topicId: "statistics", label: "Statistics" } },
+  { id: "sk-5", category: "Statistics & Inference", skillName: "Bayesian Inference", selfRating: 3, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures", source: { type: "activityScore", activityId: "a4", label: "Spaced repetition" } },
   // Time Series & ML
-  { id: "sk-6", category: "Time Series & ML", skillName: "ARIMA / GARCH Modeling", selfRating: 3, measuredScore: 55, evidence: "Course: Time Series (25%)", evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-time-series" },
-  { id: "sk-7", category: "Time Series & ML", skillName: "Regime Detection", selfRating: 2, measuredScore: 38, evidence: "Trading: slippage spike (ts-001)", evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-001" },
-  { id: "sk-8", category: "Time Series & ML", skillName: "Volatility Forecasting", selfRating: 2, measuredScore: 42, evidence: "Quiz: GARCH (not started)", evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn/quiz/q-garch" },
+  { id: "sk-6", category: "Time Series & ML", skillName: "ARIMA / GARCH Modeling", selfRating: 3, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-time-series", source: { type: "course", courseId: "c-time-series", label: "Time Series" } },
+  { id: "sk-7", category: "Time Series & ML", skillName: "Regime Detection", selfRating: 2, evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-001", source: { type: "behavior", metric: "regimeAwareness", label: "regime awareness", sessionId: "ts-001" } },
+  { id: "sk-8", category: "Time Series & ML", skillName: "Volatility Forecasting", selfRating: 2, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn/quiz/q-garch", source: { type: "quiz", quizId: "q-garch", label: "GARCH Volatility Models", fallbackTopicId: "time-series" } },
   // Optimization
-  { id: "sk-9", category: "Optimization", skillName: "Mean-Variance Portfolio", selfRating: 3, measuredScore: 45, evidence: "Mastery: Optimization (↓45%)", evidenceType: "quiz", badge: "At Risk", actionLink: "/learn/course/c-optimization" },
-  { id: "sk-10", category: "Optimization", skillName: "Convex Optimization (KKT)", selfRating: 2, measuredScore: 30, evidence: "Course: Optimization (10%)", evidenceType: "course", badge: "At Risk", actionLink: "/learn/course/c-optimization" },
+  { id: "sk-9", category: "Optimization", skillName: "Mean-Variance Portfolio", selfRating: 3, evidenceType: "quiz", badge: "At Risk", actionLink: "/learn/course/c-optimization", source: { type: "mastery", topicId: "optimization", label: "Optimization" } },
+  { id: "sk-10", category: "Optimization", skillName: "Convex Optimization (KKT)", selfRating: 2, evidenceType: "course", badge: "At Risk", actionLink: "/learn/course/c-optimization", source: { type: "course", courseId: "c-optimization", label: "Optimization" } },
   // Microstructure & Execution
-  { id: "sk-11", category: "Microstructure & Execution", skillName: "Limit Order Books", selfRating: 4, measuredScore: 73, evidence: "Course: Microstructure (40%)", evidenceType: "course", badge: "Verified", actionLink: "/learn/course/c-microstructure" },
-  { id: "sk-12", category: "Microstructure & Execution", skillName: "Market Impact Models", selfRating: 2, measuredScore: 38, evidence: "Quiz: Execution (55%)", evidenceType: "quiz", badge: "At Risk", actionLink: "/learn/quiz/q-execution" },
-  { id: "sk-13", category: "Microstructure & Execution", skillName: "Order Execution & Slippage", selfRating: 3, measuredScore: 52, evidence: "Quiz: Execution (55%)", evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-execution" },
+  { id: "sk-11", category: "Microstructure & Execution", skillName: "Limit Order Books", selfRating: 4, evidenceType: "course", badge: "Verified", actionLink: "/learn/course/c-microstructure", source: { type: "mastery", topicId: "microstructure", label: "Microstructure" } },
+  { id: "sk-12", category: "Microstructure & Execution", skillName: "Market Impact Models", selfRating: 2, evidenceType: "trade", badge: "At Risk", actionLink: "/learn/quiz/q-execution", source: { type: "behavior", metric: "slippageSensitivity", label: "slippage sensitivity", sessionId: "ts-001" } },
+  { id: "sk-13", category: "Microstructure & Execution", skillName: "Order Execution & Slippage", selfRating: 3, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-execution", source: { type: "quiz", quizId: "q-execution", label: "Order Execution & Slippage" } },
   // Risk Management
-  { id: "sk-14", category: "Risk Management", skillName: "VaR & Expected Shortfall", selfRating: 4, measuredScore: 67, evidence: "Mastery: Risk (67%)", evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures" },
-  { id: "sk-15", category: "Risk Management", skillName: "Stop-loss Discipline", selfRating: 3, measuredScore: 55, evidence: "Trading: stop ignored (ts-003)", evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-003" },
+  { id: "sk-14", category: "Risk Management", skillName: "VaR & Expected Shortfall", selfRating: 4, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures", source: { type: "mastery", topicId: "risk", label: "Risk" } },
+  { id: "sk-15", category: "Risk Management", skillName: "Stop-loss Discipline", selfRating: 3, evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-003", source: { type: "behavior", metric: "stopLossDiscipline", label: "stop-loss discipline", sessionId: "ts-003" } },
   // Python Engineering
-  { id: "sk-16", category: "Python Engineering", skillName: "NumPy / Pandas Pipelines", selfRating: 5, measuredScore: 88, evidence: "Mastery: Python (88%)", evidenceType: "quiz", badge: "Verified", actionLink: "/learn" },
-  { id: "sk-17", category: "Python Engineering", skillName: "Backtesting Frameworks", selfRating: 4, measuredScore: 75, evidence: "Resume: backtesting project", evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn" },
+  { id: "sk-16", category: "Python Engineering", skillName: "NumPy / Pandas Pipelines", selfRating: 5, evidenceType: "quiz", badge: "Verified", actionLink: "/learn", source: { type: "mastery", topicId: "python", label: "Python" } },
+  { id: "sk-17", category: "Python Engineering", skillName: "Backtesting Frameworks", selfRating: 4, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "resumeHighlight", highlightId: "rh-2", label: "backtesting project" } },
   // C++ / Systems
-  { id: "sk-18", category: "C++ / Systems", skillName: "Memory Management", selfRating: 2, measuredScore: 25, evidence: "No evidence yet", evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn" },
-  { id: "sk-19", category: "C++ / Systems", skillName: "Low-latency Patterns", selfRating: 1, measuredScore: 15, evidence: "No evidence yet", evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn" },
+  { id: "sk-18", category: "C++ / Systems", skillName: "Memory Management", selfRating: 2, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "selfRatingBaseline" } },
+  { id: "sk-19", category: "C++ / Systems", skillName: "Low-latency Patterns", selfRating: 1, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "selfRatingBaseline" } },
 ]
+
+function toSkillEntry(skill: SkillTemplate, options: SkillProgressOptions = {}): SkillEntry {
+  const progress = resolveSkillProgress(skill, options)
+  const badge = getSkillBadgeFromScore(progress.measuredScore)
+  return {
+    id: skill.id,
+    category: skill.category,
+    skillName: skill.skillName,
+    selfRating: skill.selfRating,
+    measuredScore: progress.measuredScore,
+    evidence: progress.evidence,
+    evidenceType: skill.evidenceType,
+    badge,
+    actionLink: skill.actionLink,
+  }
+}
+
+export function buildSkillMatrix(options: SkillProgressOptions = {}): SkillEntry[] {
+  return skillMatrixTemplates.map((skill) => toSkillEntry(skill, options))
+}
+
+export const skillMatrix: SkillEntry[] = buildSkillMatrix()
 
 export const readinessTrend: ReadinessTrend[] = [
   { week: "Jan 6",  score: 48, theory: 55, implementation: 45, execution: 42, communication: 50 },

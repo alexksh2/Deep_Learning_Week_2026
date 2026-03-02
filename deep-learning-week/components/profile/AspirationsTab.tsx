@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { Check, X, Plus } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
@@ -21,24 +22,69 @@ const allWeaknesses = [
 const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 function TagSelector({
-  selected, options, onToggle,
-}: { selected: string[]; options: string[]; onToggle: (v: string) => void }) {
+  selected, options, onToggle, onAdd,
+}: {
+  selected: string[]
+  options: string[]
+  onToggle: (v: string) => void
+  onAdd: (v: string) => void
+}) {
+  const [draft, setDraft] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function commit() {
+    const val = draft.trim()
+    if (!val) return
+    onAdd(val)
+    setDraft("")
+    inputRef.current?.focus()
+  }
+
+  // Custom entries = selected items not in the preset options list
+  const customTags = selected.filter(s => !options.includes(s))
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map(o => (
-        <button
-          key={o}
-          onClick={() => onToggle(o)}
-          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
-            selected.includes(o)
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border bg-muted/40 text-muted-foreground hover:border-primary/40"
-          }`}
-        >
-          {selected.includes(o) && <Check className="h-2.5 w-2.5" />}
-          {o}
-        </button>
-      ))}
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {options.map(o => (
+          <button
+            key={o}
+            onClick={() => onToggle(o)}
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+              selected.includes(o)
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-muted/40 text-muted-foreground hover:border-primary/40"
+            }`}
+          >
+            {selected.includes(o) && <Check className="h-2.5 w-2.5" />}
+            {o}
+          </button>
+        ))}
+        {customTags.map(tag => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 rounded-full border border-primary bg-primary/10 text-primary px-2.5 py-0.5 text-[11px] font-medium"
+          >
+            {tag}
+            <button onClick={() => onToggle(tag)} className="hover:opacity-70">
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <Input
+          ref={inputRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit() } }}
+          placeholder="Add custom…"
+          className="h-7 text-xs"
+        />
+        <Button size="sm" variant="outline" className="h-7 w-7 p-0 shrink-0" onClick={commit} disabled={!draft.trim()}>
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
     </div>
   )
 }
@@ -53,6 +99,12 @@ export function AspirationsTab() {
       [field]: prev[field].includes(value)
         ? prev[field].filter(x => x !== value)
         : [...prev[field], value],
+    }))
+
+  const addCustom = (field: "strengths" | "weaknesses", value: string) =>
+    setForm(prev => ({
+      ...prev,
+      [field]: prev[field].includes(value) ? prev[field] : [...prev[field], value],
     }))
 
   const toggleDay = (day: string) =>
@@ -120,12 +172,12 @@ export function AspirationsTab() {
           <CardContent className="p-0 space-y-4">
             <div className="space-y-2">
               <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Strengths to double down on</label>
-              <TagSelector selected={form.strengths} options={allStrengths} onToggle={v => toggle("strengths", v)} />
+              <TagSelector selected={form.strengths} options={allStrengths} onToggle={v => toggle("strengths", v)} onAdd={v => addCustom("strengths", v)} />
             </div>
             <Separator />
             <div className="space-y-2">
               <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Weaknesses to fix</label>
-              <TagSelector selected={form.weaknesses} options={allWeaknesses} onToggle={v => toggle("weaknesses", v)} />
+              <TagSelector selected={form.weaknesses} options={allWeaknesses} onToggle={v => toggle("weaknesses", v)} onAdd={v => addCustom("weaknesses", v)} />
             </div>
           </CardContent>
         </Card>

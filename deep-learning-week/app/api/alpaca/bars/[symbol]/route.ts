@@ -13,8 +13,7 @@ export async function GET(
     const { searchParams } = new URL(request.url)
     const clientTf = searchParams.get("timeframe") ?? "5m"
     const alpacaTf = TIMEFRAME_MAP[clientTf] ?? "5Min"
-    const limit = parseInt(searchParams.get("limit") ?? "100")
-    const data = await getBars(symbol.toUpperCase(), alpacaTf, limit)
+    const data = await getBars(symbol.toUpperCase(), alpacaTf)
     return NextResponse.json(data)
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 })

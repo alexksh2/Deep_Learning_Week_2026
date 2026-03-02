@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -41,12 +42,13 @@ import {
   Eye,
 } from "lucide-react"
 import {
-  tradingSessions,
   behavioralMetrics,
   tradingReadiness,
   coachingInsights,
 } from "@/lib/mock"
 import type { MasteryTrend } from "@/lib/types"
+import type { SessionSummary } from "@/app/api/alpaca/sessions/route"
+import type { PerformancePoint } from "@/app/api/alpaca/performance/route"
 
 function TrendArrow({ trend }: { trend: MasteryTrend }) {
   if (trend === "up") return <TrendingUp className="h-3.5 w-3.5 text-chart-2" />
@@ -55,26 +57,59 @@ function TrendArrow({ trend }: { trend: MasteryTrend }) {
 }
 
 export default function TradePage() {
-  // Combine all equity curves for the PnL chart
-  const equityData = tradingSessions
-    .slice()
-    .reverse()
-    .flatMap((s, si) =>
-      s.equityCurve.map((v, i) => ({
-        idx: si * 20 + i,
-        pnl: v,
-      }))
-    )
+  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [performance, setPerformance] = useState<PerformancePoint[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [performanceLoading, setPerformanceLoading] = useState(true)
 
-  const drawdownData = tradingSessions
-    .slice()
-    .reverse()
-    .flatMap((s, si) =>
-      s.drawdownCurve.map((v, i) => ({
-        idx: si * 20 + i,
-        drawdown: v,
-      }))
-    )
+  useEffect(() => {
+    let active = true
+
+    async function loadTradeData() {
+      try {
+        const [sessionsRes, perfRes] = await Promise.all([
+          fetch("/api/alpaca/sessions"),
+          fetch("/api/alpaca/performance?period=1M&timeframe=1D"),
+        ])
+
+        if (!active) return
+
+        if (sessionsRes.ok) {
+          const data = await sessionsRes.json()
+          setSessions(Array.isArray(data) ? data : [])
+        } else {
+          setSessions([])
+        }
+
+        if (perfRes.ok) {
+          const data = await perfRes.json()
+          setPerformance(Array.isArray(data) ? data : [])
+        } else {
+          setPerformance([])
+        }
+      } finally {
+        if (active) {
+          setSessionsLoading(false)
+          setPerformanceLoading(false)
+        }
+      }
+    }
+
+    loadTradeData()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const equityData = performance.map((point) => ({
+    date: point.date,
+    pnl: point.pnl,
+  }))
+
+  const drawdownData = performance.map((point) => ({
+    date: point.date,
+    drawdown: point.drawdown,
+  }))
 
   return (
     <TooltipProvider>
@@ -132,28 +167,38 @@ export default function TradePage() {
             </CardHeader>
             <CardContent>
               <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={equityData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                    <XAxis dataKey="idx" tick={false} />
-                    <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "var(--color-popover)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: "var(--radius-md)",
-                        fontSize: 11,
-                      }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="pnl"
-                      stroke="var(--color-chart-2)"
-                      strokeWidth={1.5}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                {performanceLoading ? (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    Loading Alpaca performance…
+                  </div>
+                ) : equityData.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    No Alpaca equity history available yet.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={equityData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
+                      <RechartsTooltip
+                        contentStyle={{
+                          backgroundColor: "var(--color-popover)",
+                          border: "1px solid var(--color-border)",
+                          borderRadius: "var(--radius-md)",
+                          fontSize: 11,
+                        }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="pnl"
+                        stroke="var(--color-chart-2)"
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -164,29 +209,39 @@ export default function TradePage() {
             </CardHeader>
             <CardContent>
               <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={drawdownData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                    <XAxis dataKey="idx" tick={false} />
-                    <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: "var(--color-popover)",
-                        border: "1px solid var(--color-border)",
-                        borderRadius: "var(--radius-md)",
-                        fontSize: 11,
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="drawdown"
-                      stroke="var(--color-destructive)"
-                      fill="var(--color-destructive)"
-                      fillOpacity={0.1}
-                      strokeWidth={1.5}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                {performanceLoading ? (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    Loading Alpaca performance…
+                  </div>
+                ) : drawdownData.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    No Alpaca drawdown data available yet.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={drawdownData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--color-muted-foreground)" }} />
+                      <RechartsTooltip
+                        contentStyle={{
+                          backgroundColor: "var(--color-popover)",
+                          border: "1px solid var(--color-border)",
+                          borderRadius: "var(--radius-md)",
+                          fontSize: 11,
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="drawdown"
+                        stroke="var(--color-destructive)"
+                        fill="var(--color-destructive)"
+                        fillOpacity={0.1}
+                        strokeWidth={1.5}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -258,68 +313,59 @@ export default function TradePage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Session</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead>Instruments</TableHead>
-                  <TableHead className="text-right">Trades</TableHead>
-                  <TableHead className="text-right">PnL</TableHead>
-                  <TableHead className="text-right">Max DD</TableHead>
-                  <TableHead>Violations</TableHead>
-                  <TableHead className="w-16"></TableHead>
+                  <TableHead className="text-right">Filled</TableHead>
+                  <TableHead className="text-right">Canceled</TableHead>
+                  <TableHead className="text-right">Daily PnL</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tradingSessions.map((session) => (
-                  <TableRow key={session.id}>
-                    <TableCell className="text-xs font-mono text-muted-foreground">
-                      {new Date(session.timestamp).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {session.instruments.map((inst) => (
-                          <Badge key={inst} variant="secondary" className="text-[10px] font-mono">
-                            {inst}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm tabular-nums">
-                      {session.numTrades}
-                    </TableCell>
-                    <TableCell
-                      className={`text-right font-mono text-sm tabular-nums ${
-                        session.pnl >= 0 ? "text-chart-2" : "text-destructive"
-                      }`}
-                    >
-                      {session.pnl >= 0 ? "+" : ""}${session.pnl}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm tabular-nums text-destructive">
-                      ${session.maxDrawdown}
-                    </TableCell>
-                    <TableCell>
-                      {session.ruleViolations.length === 0 ? (
-                        <span className="text-xs text-muted-foreground">None</span>
-                      ) : (
-                        <Badge
-                          variant="destructive"
-                          className="text-[10px] font-mono"
-                        >
-                          {session.ruleViolations.length}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Button asChild variant="ghost" size="sm" className="h-7 text-xs gap-1">
-                        <Link href={`/trade/review/${session.id}`}>
-                          Review
-                          <ArrowUpRight className="h-3 w-3" />
-                        </Link>
-                      </Button>
+                {sessionsLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                      Loading…
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : sessions.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                      No sessions yet. Place orders in the simulator to see activity here.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  sessions.map((session) => (
+                    <TableRow key={session.date}>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {new Date(session.date).toLocaleDateString("en-US", {
+                          month: "short", day: "numeric", year: "numeric",
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {session.instruments.map((inst) => (
+                            <Badge key={inst} variant="secondary" className="text-[10px] font-mono">
+                              {inst}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums">
+                        {session.numTrades}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums text-muted-foreground">
+                        {session.canceledCount}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-mono text-sm tabular-nums ${
+                          session.pnl > 0 ? "text-chart-2" : session.pnl < 0 ? "text-destructive" : "text-muted-foreground"
+                        }`}
+                      >
+                        {session.pnl === 0 ? "—" : `${session.pnl > 0 ? "+" : ""}$${session.pnl.toFixed(2)}`}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </Card>

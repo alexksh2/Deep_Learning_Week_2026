@@ -1,0 +1,83 @@
+                                                                                              
+⏺ Here's the complete chain, step by step:                                                    
+                                                                                        
+  ---                                                                                         
+  Full data flow                                            
+                                                                                              
+  User clicks "Analyse"                                                                       
+          │                                                                                   
+          ▼                                                                                   
+  page.tsx: fetch("/api/analysis/smart-beta?tickers=USMV")  
+          │
+          ▼
+  app/api/analysis/smart-beta/route.ts
+    spawn("python3", ["etf-analysis/run_analysis.py", "USMV"])
+          │
+          ▼
+  run_analysis.py
+    from smart_beta_service import analyze
+    result = analyze(["USMV"])
+    print(json.dumps(result))          ← stdout
+          │
+          ▼
+  smart_beta_service.py
+    _load_data()                       ← parquet cache or live download
+    run_factor_regression(...)         ← from smart_beta_checks_comprehensive.py
+    run_rolling_regression(...)        ← from smart_beta_checks_comprehensive.py
+    returns dict with:
+      check1.factors.{MKT,SMB,...}.{beta,se,tstat,pval}
+      check2[].{date, MKT, SMB, ...}
+      price_history[].{date, price}
+      cumulative_return[].{date, value}
+      _factor_correlation.{factors, matrix}
+          │
+          ▼
+  route.ts collects stdout → JSON.parse → NextResponse.json(data)
+          │
+          ▼
+  page.tsx receives data, splits it into:
+    setResult(data["USMV"])            → ETFResult
+    setFactorCorr(data["_factor_correlation"])
+          │
+          ▼
+  Four charts rendered:
+
+    result.price_history        → <AreaChart>    Price History
+    result.check1.factors       → <BarChart>     Factor Loadings
+    result.check2               → <LineChart>    Rolling 36-Month Betas
+    factorCorr.matrix           → <CorrelationHeatmap> SVG grid
+
+  ---
+  The JSON shape that ties it together
+
+  {
+    "USMV": {
+      "name": "iShares MSCI USA Min Vol Factor ETF",
+      "strategy": "Low Volatility",
+      "target_factors": ["BAB"],
+      "expense_ratio": 0.0015,
+      "n_obs": 170,
+      "check1": {
+        "alpha": 0.0012,  "alpha_pval": 0.31,  "r_squared": 0.892,
+        "factors": {
+          "MKT":  { "beta": 0.71, "se": 0.03, "tstat": 23.1, "pval": 0.000 },
+          "BAB":  { "beta": 0.18, "se": 0.05, "tstat":  3.6, "pval": 0.000 },
+          ...
+        }
+      },
+      "check2": [
+        { "date": "2013-07-31", "MKT": 0.68, "BAB": 0.15, "_pval_BAB": 0.02, ... },
+        ...
+      ],
+      "price_history":     [{ "date": "2011-11-30", "price": 100.0 }, ...],
+      "cumulative_return": [{ "date": "2011-11-30", "value": 1.0   }, ...]
+    },
+    "_factor_correlation": {
+      "factors": ["MKT","SMB","HML","MOM","BAB","QMJ","RMW","CARRY","ILLIQ"],
+      "matrix":  [[1.0, 0.23, ...], ...]
+    }
+  }
+
+  smart_beta_service.py builds exactly this shape. page.tsx reads exactly this shape. The
+  route.ts is just a pipe — it spawns Python, captures stdout, and forwards the JSON
+  unchanged.

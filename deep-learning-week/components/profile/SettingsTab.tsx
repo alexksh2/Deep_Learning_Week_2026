@@ -11,6 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { profileSettings as initialSettings } from "@/lib/mock"
 import type { ProfileSettings } from "@/lib/types"
+import { useAuth } from "@/contexts/AuthContext"
+import { downloadProfileExport } from "@/lib/profile-export"
 
 function SettingRow({
   label, description, checked, onCheckedChange, tip,
@@ -39,6 +41,7 @@ function SettingRow({
 }
 
 export function SettingsTab() {
+  const { user } = useAuth()
   const [settings, setSettings] = useState<ProfileSettings>(initialSettings)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [exportDone, setExportDone] = useState(false)
@@ -51,6 +54,7 @@ export function SettingsTab() {
     setSettings(p => ({ ...p, privacy: { ...p.privacy, [key]: v } }))
 
   const handleExport = () => {
+    downloadProfileExport(user)
     setExportDone(true)
     setTimeout(() => setExportDone(false), 2000)
   }
