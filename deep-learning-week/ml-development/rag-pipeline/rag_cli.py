@@ -11,7 +11,7 @@ Usage:
 All diagnostic output goes to stderr. Only the final JSON result goes to stdout.
 
 Dependencies:
-    pip install -r rag-pipeline/requirements.txt
+    pip install -r ml-development/rag-pipeline/requirements.txt
 """
 
 from __future__ import annotations

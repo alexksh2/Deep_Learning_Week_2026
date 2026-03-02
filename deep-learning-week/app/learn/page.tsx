@@ -196,9 +196,7 @@ function LearnContent() {
   const searchParams = useSearchParams()
   const activeTab = searchParams.get("tab") || "courses"
   const activeHeader = LEARN_TAB_HEADERS[activeTab] ?? LEARN_TAB_HEADERS.courses
-  const srCardsStorageKey = user?.email
-    ? `${SR_CARDS_STORAGE_KEY_PREFIX}:${user.email.toLowerCase()}`
-    : null
+  const srCardsStorageKey = `${SR_CARDS_STORAGE_KEY_PREFIX}:${user?.email?.toLowerCase() ?? "guest"}`
   const [courseSearch, setCourseSearch] = useState("")
   const [courseDifficulty, setCourseDifficulty] = useState<string>("all")
   const [quizTopic, setQuizTopic] = useState<string>("all")
@@ -233,12 +231,6 @@ function LearnContent() {
 
   useEffect(() => {
     setCardsHydrated(false)
-    if (!srCardsStorageKey) {
-      setCards(srCards)
-      setCardsHydrated(true)
-      return
-    }
-
     try {
       const stored = window.localStorage.getItem(srCardsStorageKey)
       const parsed = stored ? parseStoredSRCards(stored) : null
@@ -251,7 +243,7 @@ function LearnContent() {
   }, [srCardsStorageKey])
 
   useEffect(() => {
-    if (!srCardsStorageKey || !cardsHydrated) return
+    if (!cardsHydrated) return
     window.localStorage.setItem(srCardsStorageKey, JSON.stringify(cards))
   }, [cards, cardsHydrated, srCardsStorageKey])
 
@@ -632,18 +624,27 @@ function LearnContent() {
                 <CardContent className="p-4 text-center">
                   <p className="text-3xl font-semibold tabular-nums">{dueNow.length}</p>
                   <p className="text-xs text-muted-foreground mt-1">Due now</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Cards scheduled for today or earlier.
+                  </p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="p-4 text-center">
                   <p className="text-3xl font-semibold tabular-nums">{dueUpcoming.length}</p>
                   <p className="text-xs text-muted-foreground mt-1">Upcoming</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Cards scheduled after today.
+                  </p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="p-4 text-center">
                   <p className="text-3xl font-semibold tabular-nums">{retentionEstimate}%</p>
                   <p className="text-xs text-muted-foreground mt-1">Retention estimate</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Estimated recall based on your review history.
+                  </p>
                 </CardContent>
               </Card>
             </div>

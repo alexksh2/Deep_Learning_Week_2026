@@ -312,65 +312,67 @@ export default function TradePage() {
         {/* Recent Sessions */}
         <div>
           <h2 className="text-sm font-medium mb-3">Recent Sessions</h2>
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Instruments</TableHead>
-                  <TableHead className="text-right">Filled</TableHead>
-                  <TableHead className="text-right">Canceled</TableHead>
-                  <TableHead className="text-right">Daily PnL</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessionsLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
-                      Loading…
-                    </TableCell>
+          <Card className="py-4 gap-3">
+            <CardContent className="px-3 sm:px-4">
+              <Table className="[&_th]:h-11 [&_th]:px-3 [&_td]:px-3 [&_td]:py-3">
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Date</TableHead>
+                    <TableHead>Instruments</TableHead>
+                    <TableHead className="text-right">Filled</TableHead>
+                    <TableHead className="text-right">Canceled</TableHead>
+                    <TableHead className="text-right">Daily PnL</TableHead>
                   </TableRow>
-                ) : sessions.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
-                      No sessions yet. Place orders in the simulator to see activity here.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  sessions.map((session) => (
-                    <TableRow key={session.date}>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {new Date(session.date).toLocaleDateString("en-US", {
-                          month: "short", day: "numeric", year: "numeric",
-                        })}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {session.instruments.map((inst) => (
-                            <Badge key={inst} variant="secondary" className="text-[10px] font-mono">
-                              {inst}
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums">
-                        {session.numTrades}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums text-muted-foreground">
-                        {session.canceledCount}
-                      </TableCell>
-                      <TableCell
-                        className={`text-right font-mono text-sm tabular-nums ${
-                          session.pnl > 0 ? "text-chart-2" : session.pnl < 0 ? "text-destructive" : "text-muted-foreground"
-                        }`}
-                      >
-                        {session.pnl === 0 ? "—" : `${session.pnl > 0 ? "+" : ""}$${session.pnl.toFixed(2)}`}
+                </TableHeader>
+                <TableBody>
+                  {sessionsLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                        Loading…
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : sessions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                        No sessions yet. Place orders in the simulator to see activity here.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    sessions.map((session) => (
+                      <TableRow key={session.date} className="border-border/70">
+                        <TableCell className="text-xs font-mono text-muted-foreground">
+                          {new Date(session.date).toLocaleDateString("en-US", {
+                            month: "short", day: "numeric", year: "numeric",
+                          })}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {session.instruments.map((inst) => (
+                              <Badge key={inst} variant="secondary" className="text-[10px] font-mono">
+                                {inst}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums">
+                          {session.numTrades}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums text-muted-foreground">
+                          {session.canceledCount}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-sm tabular-nums ${
+                            session.pnl > 0 ? "text-chart-2" : session.pnl < 0 ? "text-destructive" : "text-muted-foreground"
+                          }`}
+                        >
+                          {session.pnl === 0 ? "—" : `${session.pnl > 0 ? "+" : ""}$${session.pnl.toFixed(2)}`}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
           </Card>
         </div>
       </div>

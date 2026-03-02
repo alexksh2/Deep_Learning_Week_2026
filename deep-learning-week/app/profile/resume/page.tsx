@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,13 @@ import {
 import { cn } from "@/lib/utils"
 import { resumeHighlights as initialHighlights } from "@/lib/mock"
 import type { ResumeHighlight } from "@/lib/types"
+import { useAuth } from "@/contexts/AuthContext"
+import {
+  fetchStoredResume,
+  RESUME_UPDATED_EVENT,
+  type ResumeFileState,
+  uploadStoredResume,
+} from "@/lib/resume-file-client"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -96,8 +103,12 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ResumeAnalyserPage() {
+  const { user } = useAuth()
+  const [source, setSource]   = useState<"upload" | "profile">("upload")
   const [file, setFile]       = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [storedResume, setStoredResume] = useState<ResumeFileState>({ exists: false })
+  const [storedResumeLoading, setStoredResumeLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const [data, setData]       = useState<ResumeData | null>(null)
@@ -111,11 +122,38 @@ export default function ResumeAnalyserPage() {
   const accept = (f: File) => {
     const ok = f.type === "application/pdf" || f.name.endsWith(".pdf")
             || f.type === "text/plain"      || f.name.endsWith(".txt")
-    if (!ok) { setError("Only PDF and TXT files are supported."); return }
+            || f.name.endsWith(".doc")      || f.name.endsWith(".docx")
+    if (!ok) { setError("Only PDF, TXT, DOC, and DOCX files are supported."); return }
     setFile(f)
+    setSource("upload")
     setError(null)
     setData(null)
   }
+
+  const loadStoredResume = useCallback(async () => {
+    setStoredResumeLoading(true)
+    try {
+      const existingResume = await fetchStoredResume(user?.email)
+      setStoredResume(existingResume)
+    } catch {
+      setStoredResume({ exists: false })
+    } finally {
+      setStoredResumeLoading(false)
+    }
+  }, [user?.email])
+
+  useEffect(() => {
+    void loadStoredResume()
+  }, [loadStoredResume])
+
+  useEffect(() => {
+    const onResumeUpdated = () => {
+      void loadStoredResume()
+    }
+
+    window.addEventListener(RESUME_UPDATED_EVENT, onResumeUpdated)
+    return () => window.removeEventListener(RESUME_UPDATED_EVENT, onResumeUpdated)
+  }, [loadStoredResume])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
@@ -124,15 +162,30 @@ export default function ResumeAnalyserPage() {
   }, [])
 
   async function analyse() {
-    if (!file) return
+    if (source === "upload" && !file) return
+    if (source === "profile" && !storedResume.exists) {
+      setError("No stored resume found in your profile. Upload one first or switch to upload mode.")
+      return
+    }
+
     setLoading(true); setError(null)
     try {
       const form = new FormData()
-      form.append("file", file)
+      if (source === "upload" && file) {
+        await uploadStoredResume(file, user?.email)
+        form.append("file", file)
+      } else {
+        form.append("useStored", "true")
+        if (user?.email) {
+          form.append("email", user.email)
+        }
+      }
+
       const res  = await fetch("/api/profile/resume", { method: "POST", body: form })
       const json = await res.json()
       if (!res.ok) { setError(json.error ?? "Analysis failed"); return }
       setData(json)
+      void loadStoredResume()
     } catch (e) {
       setError(String(e))
     } finally {
@@ -141,6 +194,11 @@ export default function ResumeAnalyserPage() {
   }
 
   const fileSizeMB = file ? (file.size / 1_048_576).toFixed(2) : ""
+  const storedResumeSummary = storedResume.exists
+    ? `Updated ${formatUploadedAt(storedResume.uploadedAt)} · ${formatFileSize(storedResume.size)}`
+    : "No resume stored in profile."
+  const canAnalyse = source === "upload" ? Boolean(file) : storedResume.exists
+  const analysingLabel = source === "upload" ? "Analyse Uploaded Resume" : "Analyse Profile Resume"
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -148,61 +206,130 @@ export default function ResumeAnalyserPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Resume Analyser</h1>
         <p className="text-sm text-muted-foreground">
-          Upload your resume to extract structured information and get a quant-finance relevance assessment.
+          Analyse either a new upload or your existing profile resume to extract structured information and get a quant-finance relevance assessment.
         </p>
       </div>
 
-      {/* Upload zone */}
+      {/* Resume source */}
       <Card>
         <CardContent className="pt-6">
-          <div
-            className={cn(
-              "relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors cursor-pointer py-14 px-6 text-center",
-              dragging ? "border-chart-2 bg-chart-2/5" : "border-border hover:border-muted-foreground/40",
-              file && "border-chart-2/40 bg-chart-2/3",
-            )}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => inputRef.current?.click()}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf,.txt"
-              className="sr-only"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) accept(f) }}
-            />
-
-            {file ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-chart-2/15">
-                  <FileText className="h-6 w-6 text-chart-2" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">{fileSizeMB} MB · {file.type || "text/plain"}</p>
-                </div>
-                <Button
-                  variant="ghost" size="sm"
-                  className="text-muted-foreground h-7 text-xs"
-                  onClick={(e) => { e.stopPropagation(); setFile(null); setData(null) }}
-                >
-                  <X className="h-3 w-3 mr-1" /> Remove
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-muted/30">
-                  <Upload className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Drop your resume here</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">or click to browse · PDF or TXT · max 10 MB</p>
-                </div>
-              </div>
-            )}
+          <div className="mb-4 grid gap-2 sm:grid-cols-2">
+            <Button
+              size="sm"
+              variant={source === "upload" ? "default" : "outline"}
+              onClick={() => {
+                setSource("upload")
+                setError(null)
+              }}
+            >
+              Upload New Resume
+            </Button>
+            <Button
+              size="sm"
+              variant={source === "profile" ? "default" : "outline"}
+              disabled={storedResumeLoading || !storedResume.exists}
+              onClick={() => {
+                setSource("profile")
+                setError(null)
+                setData(null)
+              }}
+            >
+              Use Profile Resume
+            </Button>
           </div>
+
+          {source === "upload" ? (
+            <div
+              className={cn(
+                "relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors cursor-pointer py-14 px-6 text-center",
+                dragging ? "border-chart-2 bg-chart-2/5" : "border-border hover:border-muted-foreground/40",
+                file && "border-chart-2/40 bg-chart-2/3",
+              )}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+              onClick={() => inputRef.current?.click()}
+            >
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".pdf,.txt,.doc,.docx"
+                className="sr-only"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) accept(f) }}
+              />
+
+              {file ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-chart-2/15">
+                    <FileText className="h-6 w-6 text-chart-2" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">{fileSizeMB} MB · {file.type || "text/plain"}</p>
+                  </div>
+                  <Button
+                    variant="ghost" size="sm"
+                    className="text-muted-foreground h-7 text-xs"
+                    onClick={(e) => { e.stopPropagation(); setFile(null); setData(null) }}
+                  >
+                    <X className="h-3 w-3 mr-1" /> Remove
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-muted/30">
+                    <Upload className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Drop your resume here</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">or click to browse · PDF/TXT/DOC/DOCX · max 10 MB</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border bg-background">
+                  <FileText className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {storedResumeLoading ? "Loading profile resume..." : storedResume.exists ? storedResume.originalName : "No resume uploaded"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {storedResumeLoading ? "Please wait while resume metadata loads." : storedResumeSummary}
+                  </p>
+                </div>
+                {storedResume.exists && storedResume.viewUrl && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => window.open(storedResume.viewUrl, "_blank", "noopener,noreferrer")}
+                  >
+                    View
+                  </Button>
+                )}
+              </div>
+              {!storedResumeLoading && !storedResume.exists && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Upload a resume from Profile to use this source, or switch to upload mode above.
+                </p>
+              )}
+            </div>
+          )}
+
+          {source === "upload" && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Uploaded resumes are automatically saved to your profile before analysis.
+            </p>
+          )}
+          {source === "profile" && !storedResumeLoading && storedResume.exists && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Analysis will run on the currently stored profile resume.
+            </p>
+          )}
 
           {error && (
             <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
@@ -212,10 +339,10 @@ export default function ResumeAnalyserPage() {
           )}
 
           <div className="mt-4 flex justify-end">
-            <Button onClick={analyse} disabled={!file || loading} size="sm">
+            <Button onClick={analyse} disabled={!canAnalyse || loading || storedResumeLoading} size="sm">
               {loading
                 ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Analysing…</>
-                : "Analyse Resume"}
+                : analysingLabel}
             </Button>
           </div>
         </CardContent>
@@ -574,12 +701,26 @@ export default function ResumeAnalyserPage() {
       {!loading && !data && !error && (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16 text-center">
           <Star className="h-8 w-8 text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">Upload a resume to see the analysis</p>
+          <p className="text-sm text-muted-foreground">Upload a resume or use your profile resume to see the analysis</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Claude will extract all content and score it for quant-finance relevance
+            The analyzer will extract all content and score it for quant-finance relevance
           </p>
         </div>
       )}
     </div>
   )
+}
+
+function formatUploadedAt(uploadedAt?: string): string {
+  if (!uploadedAt) return "Unknown date"
+  const date = new Date(uploadedAt)
+  if (Number.isNaN(date.getTime())) return "Unknown date"
+  return date.toLocaleDateString()
+}
+
+function formatFileSize(sizeBytes?: number): string {
+  if (typeof sizeBytes !== "number") return "Unknown size"
+  if (sizeBytes < 1024) return `${sizeBytes} B`
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
 }

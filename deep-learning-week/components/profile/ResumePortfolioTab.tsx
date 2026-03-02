@@ -1,16 +1,22 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { FileText, Eye, RefreshCw, Plus, Trash2, ExternalLink } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { AlertCircle, ExternalLink, Eye, FileText, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { QuickActionsCard } from "@/components/profile/QuickActionsCard"
-import { resumeMetadata, portfolioLinks as initialLinks } from "@/lib/mock"
+import { portfolioLinks as initialLinks } from "@/lib/mock"
 import type { PortfolioLink, LinkCategory } from "@/lib/types"
 import { loadStoredPortfolioLinks, saveStoredPortfolioLinks } from "@/lib/profile-client-state"
+import { useAuth } from "@/contexts/AuthContext"
+import {
+  fetchStoredResume,
+  RESUME_UPDATED_EVENT,
+  type ResumeFileState,
+  uploadStoredResume,
+} from "@/lib/resume-file-client"
 
 const categories: LinkCategory[] = ["GitHub", "Website", "LinkedIn", "Project"]
 
@@ -22,17 +28,62 @@ const categoryColor: Record<LinkCategory, string> = {
 }
 
 export function ResumePortfolioTab() {
-  const [previewOpen, setPreviewOpen] = useState(false)
+  const { user } = useAuth()
   const [links, setLinks] = useState<PortfolioLink[]>(initialLinks)
+  const [resume, setResume] = useState<ResumeFileState>({ exists: false })
+  const [resumeLoading, setResumeLoading] = useState(true)
+  const [resumeUpdating, setResumeUpdating] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
   const [newLabel, setNewLabel] = useState("")
   const [newUrl, setNewUrl] = useState("")
   const [newCat, setNewCat] = useState<LinkCategory>("GitHub")
+  const replaceInputRef = useRef<HTMLInputElement>(null)
+
+  const loadResume = useCallback(async () => {
+    setResumeLoading(true)
+    try {
+      const data = await fetchStoredResume(user?.email)
+      setResume(data)
+      setResumeError(null)
+    } catch (error) {
+      setResumeError(error instanceof Error ? error.message : "Failed to load resume.")
+      setResume({ exists: false })
+    } finally {
+      setResumeLoading(false)
+    }
+  }, [user?.email])
+
+  const handleReplace = async (file: File) => {
+    setResumeUpdating(true)
+    setResumeError(null)
+    try {
+      const data = await uploadStoredResume(file, user?.email)
+      setResume(data)
+    } catch (error) {
+      setResumeError(error instanceof Error ? error.message : "Failed to upload resume.")
+    } finally {
+      setResumeUpdating(false)
+    }
+  }
 
   useEffect(() => {
     setLinks(loadStoredPortfolioLinks(initialLinks.map((link) => ({ ...link }))))
     setIsHydrated(true)
   }, [])
+
+  useEffect(() => {
+    void loadResume()
+  }, [loadResume])
+
+  useEffect(() => {
+    const onResumeUpdated = () => {
+      void loadResume()
+    }
+
+    window.addEventListener(RESUME_UPDATED_EVENT, onResumeUpdated)
+    return () => window.removeEventListener(RESUME_UPDATED_EVENT, onResumeUpdated)
+  }, [loadResume])
 
   useEffect(() => {
     if (!isHydrated) return
@@ -47,6 +98,10 @@ export function ResumePortfolioTab() {
 
   const removeLink = (id: string) => setLinks(prev => prev.filter(l => l.id !== id))
 
+  const resumeSubtitle = resume.exists
+    ? `Updated ${formatUploadedAt(resume.uploadedAt)} · ${formatFileSize(resume.size)}`
+    : "Upload your resume to enable viewing and replacement."
+
   return (
     <div className="space-y-5">
       {/* Resume Section */}
@@ -60,20 +115,56 @@ export function ResumePortfolioTab() {
               <FileText className="h-5 w-5 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{resumeMetadata.fileName}</p>
+              <p className="text-sm font-medium truncate">
+                {resumeLoading ? "Loading resume..." : resume.exists ? resume.originalName : "No resume uploaded"}
+              </p>
               <p className="text-xs text-muted-foreground">
-                Updated {resumeMetadata.lastUpdated} · {resumeMetadata.fileSize}
+                {resumeLoading ? "Please wait while resume metadata loads." : resumeSubtitle}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setPreviewOpen(true)}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={!resume.exists || !resume.viewUrl || resumeUpdating || resumeLoading}
+                onClick={() => {
+                  if (!resume.viewUrl) return
+                  window.open(resume.viewUrl, "_blank", "noopener,noreferrer")
+                }}
+              >
                 <Eye className="h-3.5 w-3.5" />View
               </Button>
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
-                <RefreshCw className="h-3.5 w-3.5" />Replace
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                disabled={resumeUpdating}
+                onClick={() => replaceInputRef.current?.click()}
+              >
+                {resumeUpdating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {resume.exists ? "Replace" : "Upload"}
               </Button>
+              <input
+                ref={replaceInputRef}
+                type="file"
+                accept=".pdf,.txt,.doc,.docx"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (!file) return
+                  void handleReplace(file)
+                  event.currentTarget.value = ""
+                }}
+              />
             </div>
           </div>
+          {resumeError && (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>{resumeError}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -154,38 +245,20 @@ export function ResumePortfolioTab() {
       </Card>
 
       <QuickActionsCard />
-
-      {/* Resume preview dialog */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-base flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              {resumeMetadata.fileName}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="rounded-md border border-border bg-muted/30 p-4 space-y-3 min-h-[300px]">
-            <div className="text-center border-b border-border pb-3">
-              <p className="text-base font-bold">Alex Khoo Shien How</p>
-              <p className="text-xs text-muted-foreground">AL0001OW@e.ntu.edu.sg · github.com/alexksh2 · NTU</p>
-            </div>
-            {[
-              { section: "Education", lines: ["MIT — B.S. Mathematics & Computer Science (GPA 3.9)", "Relevant: Probability Theory, Stochastic Processes, Numerical Methods, Algorithms"] },
-              { section: "Experience", lines: ["Quant Research Intern – Two Sigma (Summer 2025)", "Built ML pipeline for volatility calibration across equity options surface", "Risk Analyst Intern – Citadel (Summer 2024)", "Backtesting framework for systematic execution strategies; Python, Pandas"] },
-              { section: "Projects", lines: ["Vol Surface Pricer: SVI parametrization + calibration in Python/AWS", "Pairs Trading Engine: Cointegration-based stat-arb with risk overlays"] },
-              { section: "Skills", lines: ["Python, C++ (intermediate), NumPy, Pandas, PyTorch", "Topics: Stochastic calculus, time series, optimization, microstructure"] },
-            ].map(({ section, lines }) => (
-              <div key={section}>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">{section}</p>
-                {lines.map((l, i) => <p key={i} className="text-xs">{l}</p>)}
-              </div>
-            ))}
-          </div>
-          <DialogFooter>
-            <Button size="sm" variant="outline" onClick={() => setPreviewOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
+}
+
+function formatUploadedAt(uploadedAt?: string): string {
+  if (!uploadedAt) return "Unknown date"
+  const date = new Date(uploadedAt)
+  if (Number.isNaN(date.getTime())) return "Unknown date"
+  return date.toLocaleDateString()
+}
+
+function formatFileSize(sizeBytes?: number): string {
+  if (typeof sizeBytes !== "number") return "Unknown size"
+  if (sizeBytes < 1024) return `${sizeBytes} B`
+  if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`
+  return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
 }

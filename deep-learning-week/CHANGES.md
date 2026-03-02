@@ -294,6 +294,22 @@ Added **Analysis** nav item under Trade section with `BarChart2` icon.
 | `router/router_cli.py` | New — CLI wrapper for router model (subprocess target) |
 | `etf-analysis/run_analysis.py` | New — CLI entry point for smart beta (subprocess target) |
 
+### Restarting the dev server
+
+If `npm run dev` fails because port 3000 is already in use, kill the stale
+process first then restart:
+
+```bash
+# Kill whatever is holding port 3000, then start fresh
+lsof -ti:3000 | xargs kill -9 2>/dev/null; npm run dev
+```
+
+Or if you prefer to target Next.js by name:
+
+```bash
+pkill -f "next dev" 2>/dev/null; npm run dev
+```
+
 ---
 
 ## 8. Environment Variables

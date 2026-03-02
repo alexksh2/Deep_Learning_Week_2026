@@ -1,26 +1,96 @@
 import { spawn } from "child_process"
-import { writeFile, unlink } from "fs/promises"
+import { readFile, stat, unlink, writeFile } from "fs/promises"
 import os from "os"
 import path from "path"
 import { NextResponse } from "next/server"
+import { resolvePythonScriptPath } from "@/lib/python-paths"
+
+const RESUME_DIR = path.join(process.cwd(), "data", "resumes")
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".txt", ".doc", ".docx"])
+
+type ResumeMeta = {
+  originalName: string
+  storedName: string
+  mimeType: string
+  size: number
+  uploadedAt: string
+}
+
+function normalizeUserKey(rawEmail: string | null): string {
+  const normalized = (rawEmail ?? "guest").trim().toLowerCase()
+  const safe = normalized.replace(/[^a-z0-9._-]/g, "_")
+  return safe || "guest"
+}
+
+function extFromName(fileName: string): string {
+  return path.extname(fileName).toLowerCase()
+}
+
+function metaPathFor(userKey: string): string {
+  return path.join(RESUME_DIR, `${userKey}__meta.json`)
+}
+
+async function resolveStoredResumePath(email: string | null): Promise<string | null> {
+  const userKey = normalizeUserKey(email)
+  try {
+    const rawMeta = await readFile(metaPathFor(userKey), "utf8")
+    const meta = JSON.parse(rawMeta) as ResumeMeta
+    if (!meta?.storedName) return null
+
+    const extension = extFromName(meta.storedName)
+    if (!ALLOWED_EXTENSIONS.has(extension)) return null
+
+    const storedPath = path.join(RESUME_DIR, meta.storedName)
+    const info = await stat(storedPath).catch(() => null)
+    return info?.isFile() ? storedPath : null
+  } catch {
+    return null
+  }
+}
 
 export async function POST(request: Request) {
   try {
     const form = await request.formData()
-    const file = form.get("file") as File | null
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 })
-    }
+    const fileInput = form.get("file")
+    const useStored = form.get("useStored") === "true"
+    const emailInput = form.get("email")
+    const email = typeof emailInput === "string" ? emailInput : null
 
-    const name = file.name.toLowerCase()
-    const isPDF  = file.type === "application/pdf" || name.endsWith(".pdf")
-    const isTXT  = file.type === "text/plain"      || name.endsWith(".txt")
-    const isDOCX = name.endsWith(".docx") || name.endsWith(".doc")
+    let analysisPath: string | null = null
+    let tempPathToDelete: string | null = null
 
-    if (!isPDF && !isTXT && !isDOCX) {
+    if (fileInput instanceof File) {
+      const name = fileInput.name.toLowerCase()
+      const isPDF  = fileInput.type === "application/pdf" || name.endsWith(".pdf")
+      const isTXT  = fileInput.type === "text/plain"      || name.endsWith(".txt")
+      const isDOCX = name.endsWith(".docx") || name.endsWith(".doc")
+
+      if (!isPDF && !isTXT && !isDOCX) {
+        return NextResponse.json(
+          { error: "Only PDF, TXT, DOC, and DOCX files are supported." },
+          { status: 415 },
+        )
+      }
+
+      // Write upload to a temp file so the Python subprocess can read it.
+      const ext = name.split(".").pop() ?? "pdf"
+      const tmpPath = path.join(os.tmpdir(), `resume_${Date.now()}.${ext}`)
+      const bytes = await fileInput.arrayBuffer()
+      await writeFile(tmpPath, Buffer.from(bytes))
+      analysisPath = tmpPath
+      tempPathToDelete = tmpPath
+    } else if (useStored || email) {
+      analysisPath = await resolveStoredResumePath(email)
+      if (!analysisPath) {
+        return NextResponse.json(
+          { error: "No stored resume found in profile. Upload one or choose a different source." },
+          { status: 400 },
+        )
+      }
+    } else {
       return NextResponse.json(
-        { error: "Only PDF, TXT and DOCX files are supported." },
-        { status: 415 },
+        { error: "No file provided. Upload a resume or use your stored profile resume." },
+        { status: 400 },
       )
     }
 
@@ -28,16 +98,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GROQ_API_KEY not configured" }, { status: 503 })
     }
 
-    // Write upload to a temp file so the Python subprocess can read it
-    const ext     = name.split(".").pop() ?? "pdf"
-    const tmpPath = path.join(os.tmpdir(), `resume_${Date.now()}.${ext}`)
-    const bytes   = await file.arrayBuffer()
-    await writeFile(tmpPath, Buffer.from(bytes))
+    if (!analysisPath) {
+      return NextResponse.json(
+        { error: "Unable to resolve a resume source for analysis." },
+        { status: 400 },
+      )
+    }
 
-    const script = path.join(process.cwd(), "resume-analysis", "api.py")
+    const script = resolvePythonScriptPath(
+      "ml-development/resume-analysis/api.py",
+      "resume-analysis/api.py",
+    )
 
     return new Promise<Response>((resolve) => {
-      const py = spawn("python3", [script, "--file", tmpPath], {
+      const py = spawn("python3", [script, "--file", analysisPath], {
         env: { ...process.env },
       })
 
@@ -50,13 +124,17 @@ export async function POST(request: Request) {
       // 2-min timeout (model loading + two Groq calls)
       const timer = setTimeout(() => {
         py.kill()
-        unlink(tmpPath).catch(() => {})
+        if (tempPathToDelete) {
+          unlink(tempPathToDelete).catch(() => {})
+        }
         resolve(NextResponse.json({ error: "Analysis timed out" }, { status: 504 }))
       }, 120_000)
 
       py.on("close", (code: number) => {
         clearTimeout(timer)
-        unlink(tmpPath).catch(() => {})
+        if (tempPathToDelete) {
+          unlink(tempPathToDelete).catch(() => {})
+        }
 
         if (code !== 0) {
           resolve(

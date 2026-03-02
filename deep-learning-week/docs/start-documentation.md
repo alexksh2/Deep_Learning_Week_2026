@@ -26,12 +26,12 @@ npm install
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r router/requirements.txt
-pip install -r rag-pipeline/requirements.txt
+pip install -r ml-development/rag-pipeline/requirements.txt
 ```
 
 Notes:
 - `router/requirements.txt` contains query-router + Smart Beta dependencies.
-- `rag-pipeline/requirements.txt` contains PDF RAG dependencies (including `faiss-cpu`).
+- `ml-development/rag-pipeline/requirements.txt` contains PDF RAG dependencies (including `faiss-cpu`).
 
 ## 5. Configure environment variables
 
@@ -82,16 +82,30 @@ npm run lint
 
 - Run RAG CLI directly (after venv activation):
 ```bash
-python3 rag-pipeline/rag_cli.py index --file resume.txt --index-dir /tmp/rag_index
-python3 rag-pipeline/rag_cli.py query --question "Summarize this resume" --index-dir /tmp/rag_index
+python3 ml-development/rag-pipeline/rag_cli.py index --file resume.txt --index-dir /tmp/rag_index
+python3 ml-development/rag-pipeline/rag_cli.py query --question "Summarize this resume" --index-dir /tmp/rag_index
 ```
 
-## 8. Troubleshooting
+## 8. Restarting the dev server
+
+If port 3000 is already in use, kill the stale process before restarting:
+
+```bash
+lsof -ti:3000 | xargs kill -9 2>/dev/null; npm run dev
+```
+
+Or by process name:
+
+```bash
+pkill -f "next dev" 2>/dev/null; npm run dev
+```
+
+## 9. Troubleshooting
 
 - `ModuleNotFoundError: faiss`
   - Ensure venv is active and install:
     ```bash
-    pip install -r rag-pipeline/requirements.txt
+    pip install -r ml-development/rag-pipeline/requirements.txt
     ```
 
 - Ollama connection errors

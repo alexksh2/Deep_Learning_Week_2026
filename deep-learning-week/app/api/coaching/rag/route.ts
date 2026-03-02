@@ -4,8 +4,12 @@ import { randomUUID }        from "crypto"
 import os                    from "os"
 import path                  from "path"
 import { NextResponse }      from "next/server"
+import { resolvePythonScriptPath } from "@/lib/python-paths"
 
-const SCRIPT = path.join(process.cwd(), "rag-pipeline", "rag_cli.py")
+const SCRIPT = resolvePythonScriptPath(
+  "ml-development/rag-pipeline/rag_cli.py",
+  "rag-pipeline/rag_cli.py",
+)
 
 function runSubprocess(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {

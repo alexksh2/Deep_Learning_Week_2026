@@ -1,6 +1,6 @@
 import { spawn } from "child_process"
 import { NextResponse } from "next/server"
-import path from "path"
+import { resolvePythonScriptPath } from "@/lib/python-paths"
 
 export interface ChatMessage {
   role: "user" | "assistant"
@@ -14,7 +14,10 @@ function callRouter(query: string): Promise<{ model: string; label: string; conf
   const fallback = { model: process.env.OLLAMA_MODEL ?? "llama3.2", label: "default", confidence: 1.0 }
 
   return new Promise((resolve) => {
-    const script = path.join(process.cwd(), "router", "router_cli.py")
+    const script = resolvePythonScriptPath(
+      "ml-development/router/router_cli.py",
+      "router/router_cli.py",
+    )
     const py = spawn("python3", [script, query])
     let stdout = ""
 

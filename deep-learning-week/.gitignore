@@ -14,9 +14,13 @@ router/models/
 
 # ETF analysis cache (parquet files, regenerated on demand)
 etf-analysis/cache/
+ml-development/etf-analysis/cache/
 router/__pycache__/
 router/*.pyc
+ml-development/**/__pycache__/
+ml-development/**/*.pyc
 
 # Local SQLite auth database
 data/*.sqlite
 data/*.db
+data/resumes/

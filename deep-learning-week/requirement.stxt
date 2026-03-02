@@ -8,3 +8,12 @@ Skills Matrix Status Requirement
 - This mapping must drive both:
   - Per-skill status badge in each row
   - Summary counters for Verified / Needs Evidence / At Risk
+
+Resume Upload/View/Replace Requirement
+
+- Resume uploads must persist in one shared folder: `data/resumes/`.
+- All resume upload entry points (profile update dialog and resume analyser dropzone) must write to that same folder.
+- Resume section must support:
+  - `View`: opens the currently stored resume file from backend.
+  - `Replace`: uploads a new file and replaces the previously stored resume for that user.
+- Resume metadata (name, updated date, size) must be loaded dynamically from backend storage.

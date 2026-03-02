@@ -1,6 +1,6 @@
 import { spawn } from "child_process"
-import path from "path"
 import { NextResponse } from "next/server"
+import { resolvePythonScriptPath } from "@/lib/python-paths"
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -10,7 +10,10 @@ export async function GET(request: Request) {
     .map((t) => t.trim().toUpperCase())
     .filter(Boolean)
 
-  const script = path.join(process.cwd(), "etf-analysis", "run_analysis.py")
+  const script = resolvePythonScriptPath(
+    "ml-development/etf-analysis/run_analysis.py",
+    "etf-analysis/run_analysis.py",
+  )
 
   return new Promise<Response>((resolve) => {
     const py = spawn("python3", [script, ...tickerList])

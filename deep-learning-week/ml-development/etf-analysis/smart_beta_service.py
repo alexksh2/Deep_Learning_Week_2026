@@ -3,10 +3,10 @@ smart_beta_service.py
 =====================
 FastAPI service layer for smart_beta_checks_comprehensive.py.
 
-Imports the analysis script directly (both files live in etf-analysis/).
+Imports the analysis script directly (both files live in ml-development/etf-analysis/).
 Adds parquet caching and JSON serialisation on top.
 
-Parquet cache (etf-analysis/cache/)
+Parquet cache (ml-development/etf-analysis/cache/)
 ------------------------------------
   factors.parquet      — monthly factor returns (Ken French + FRED)
   etf_returns.parquet  — monthly ETF excess returns

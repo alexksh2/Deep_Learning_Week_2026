@@ -19,6 +19,7 @@ import {
   FileSearch,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -66,7 +67,8 @@ const navItems: NavItem[] = [
     href: "/profile",
     icon: User,
     children: [
-      { label: "Resume Analyser", href: "/profile/resume", icon: FileSearch },
+      { label: "Resume Analyser", href: "/profile/resume",    icon: FileSearch },
+      { label: "Interview",       href: "/profile/interview", icon: ClipboardList },
     ],
   },
 ]
