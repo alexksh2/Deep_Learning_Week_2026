@@ -3,7 +3,7 @@ interview_llm.py
 ================
 LLM subprocess for the QLOS Interview Pipeline.
 
-Sends the full conversation history to Groq and returns the next response.
+Sends the full conversation history to OpenAI and returns the next response.
 The LLM conducts the interview autonomously — it decides what to ask and
 when to give feedback based on the conversation so far.
 
@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Load env
@@ -77,12 +77,12 @@ HOW TO CONDUCT THE INTERVIEW:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_client() -> Groq:
-    key = os.getenv("GROQ_API_KEY")
+def get_client() -> OpenAI:
+    key = os.getenv("OPENAI_API_KEY")
     if not key:
-        print(json.dumps({"error": "GROQ_API_KEY not set"}))
+        print(json.dumps({"error": "OPENAI_API_KEY not set"}))
         sys.exit(1)
-    return Groq(api_key=key)
+    return OpenAI(api_key=key)
 
 
 def parse_score(text: str) -> Optional[int]:
@@ -115,14 +115,15 @@ def main() -> None:
     client = get_client()
     system = build_system(args.category, args.total, args.context_block)
 
-    print("Calling Groq...", file=sys.stderr)
+    print("Calling OpenAI...", file=sys.stderr)
+    model = os.getenv("OPENAI_MODEL_INTERVIEW", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=model,
         messages=[{"role": "system", "content": system}] + messages,
         max_tokens=600,
         temperature=0.5,
     )
-    content = resp.choices[0].message.content.strip()
+    content = (resp.choices[0].message.content or "").strip()
 
     print(json.dumps({
         "content": content,

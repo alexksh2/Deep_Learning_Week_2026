@@ -1,7 +1,7 @@
 """
 Step 1b — bootstrap_labels.py  (optional)
 ==========================================
-If you have a list of unlabeled queries, this script uses Claude to
+If you have a list of unlabeled queries, this script uses OpenAI to
 label them as simple / medium / complex and appends them to raw.csv.
 
 Use this to quickly grow your dataset before fine-tuning.
@@ -19,7 +19,7 @@ import csv
 import time
 import argparse
 from pathlib import Path
-import anthropic
+from openai import OpenAI
 
 SYSTEM_PROMPT = """You are a routing classifier for a quant finance learning app.
 Given a user query, classify it into exactly one of three categories:
@@ -31,25 +31,29 @@ complex — multi-step derivations, system design, research-level questions, dee
 Reply with ONLY one word: simple, medium, or complex. No explanation."""
 
 
-def label_query(client: anthropic.Anthropic, query: str) -> str:
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+def label_query(client: OpenAI, query: str, model: str) -> str:
+    resp = client.chat.completions.create(
+        model=model,
         max_tokens=10,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": query}],
+        temperature=0.0,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": query},
+        ],
     )
-    label = msg.content[0].text.strip().lower()
+    label = (resp.choices[0].message.content or "").strip().lower()
     if label not in ("simple", "medium", "complex"):
         return "medium"  # fallback
     return label
 
 
 def bootstrap(input_path: str, output_path: str, delay: float = 0.1) -> None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise EnvironmentError("ANTHROPIC_API_KEY not set")
+        raise EnvironmentError("OPENAI_API_KEY not set")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    model = os.getenv("OPENAI_MODEL_ROUTER_LABELER", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+    client = OpenAI(api_key=api_key)
 
     queries = [
         line.strip()
@@ -79,7 +83,7 @@ def bootstrap(input_path: str, output_path: str, delay: float = 0.1) -> None:
             writer.writeheader()
 
         for i, query in enumerate(new_rows, 1):
-            label = label_query(client, query)
+            label = label_query(client, query, model)
             writer.writerow({"query": query, "label": label})
             print(f"  [{i:3d}/{len(new_rows)}] {label:8s}  {query[:70]}")
             time.sleep(delay)

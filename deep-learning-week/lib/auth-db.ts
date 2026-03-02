@@ -30,6 +30,14 @@ type DbUserRow = {
   north_star: string
 }
 
+type ResumeAnalysisRow = {
+  user_email: string
+  analysis_json: string
+  source: string
+  analyzed_at: string
+  updated_at: string
+}
+
 let db: DatabaseSync | null = null
 
 function getDb(): DatabaseSync {
@@ -69,6 +77,7 @@ function getDb(): DatabaseSync {
       title      TEXT NOT NULL,
       model      TEXT NOT NULL,
       mode       TEXT NOT NULL,
+      documents  TEXT NOT NULL DEFAULT '[]',
       messages   TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -83,7 +92,22 @@ function getDb(): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (quiz_id, user_email)
     );
+    CREATE TABLE IF NOT EXISTS resume_analyses (
+      user_email TEXT PRIMARY KEY,
+      analysis_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      analyzed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `)
+
+  // Backfill new columns for older local DBs.
+  const conversationColumns = db
+    .prepare("PRAGMA table_info(conversations)")
+    .all() as Array<{ name: string }>
+  if (!conversationColumns.some((col) => col.name === "documents")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN documents TEXT NOT NULL DEFAULT '[]';")
+  }
 
   seedDemoUser()
 
@@ -244,6 +268,7 @@ type ConversationRow = {
   title: string
   model: string
   mode: string
+  documents: string
   messages: string
   created_at: string
   updated_at: string
@@ -263,6 +288,7 @@ export type DbConversation = {
   title: string
   model: string
   mode: string
+  documents?: unknown[]
   messages: unknown[]
   createdAt: string
   updatedAt: string
@@ -295,6 +321,7 @@ export function getConversations(email: string): DbConversation[] {
     title: row.title,
     model: row.model,
     mode: row.mode,
+    documents: parseJsonArray(row.documents),
     messages: parseJsonArray(row.messages),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -305,8 +332,8 @@ export function upsertConversation(email: string, conv: DbConversation): void {
   const sqlite = getDb()
   sqlite
     .prepare(`
-      INSERT OR REPLACE INTO conversations (id, user_email, title, model, mode, messages, created_at, updated_at)
-      VALUES (@id, @user_email, @title, @model, @mode, @messages, @created_at, @updated_at)
+      INSERT OR REPLACE INTO conversations (id, user_email, title, model, mode, documents, messages, created_at, updated_at)
+      VALUES (@id, @user_email, @title, @model, @mode, @documents, @messages, @created_at, @updated_at)
     `)
     .run({
       id: conv.id,
@@ -314,6 +341,7 @@ export function upsertConversation(email: string, conv: DbConversation): void {
       title: conv.title,
       model: conv.model,
       mode: conv.mode,
+      documents: JSON.stringify(conv.documents ?? []),
       messages: JSON.stringify(conv.messages),
       created_at: conv.createdAt,
       updated_at: conv.updatedAt ?? new Date().toISOString(),
@@ -366,5 +394,61 @@ export function upsertQuizProgress(email: string, progress: Omit<StoredQuizProgr
     attempts: progress.attempts,
     inProgress: progress.inProgress,
     updatedAt,
+  }
+}
+
+export type DbResumeAnalysis = {
+  analysis: Record<string, unknown>
+  source: string
+  analyzedAt: string
+  updatedAt: string
+}
+
+export function getResumeAnalysis(email: string): DbResumeAnalysis | null {
+  const sqlite = getDb()
+  const row = sqlite
+    .prepare("SELECT * FROM resume_analyses WHERE user_email = ?")
+    .get(email.toLowerCase()) as ResumeAnalysisRow | undefined
+
+  if (!row) return null
+
+  const analysis = parseJsonObject<Record<string, unknown>>(row.analysis_json)
+  if (!analysis) return null
+
+  return {
+    analysis,
+    source: row.source,
+    analyzedAt: row.analyzed_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function upsertResumeAnalysis(
+  email: string,
+  analysis: Record<string, unknown>,
+  source: string,
+  analyzedAt?: string,
+): DbResumeAnalysis {
+  const sqlite = getDb()
+  const timestamp = analyzedAt ?? new Date().toISOString()
+
+  sqlite
+    .prepare(`
+      INSERT OR REPLACE INTO resume_analyses (user_email, analysis_json, source, analyzed_at, updated_at)
+      VALUES (@user_email, @analysis_json, @source, @analyzed_at, @updated_at)
+    `)
+    .run({
+      user_email: email.toLowerCase(),
+      analysis_json: JSON.stringify(analysis),
+      source,
+      analyzed_at: timestamp,
+      updated_at: timestamp,
+    })
+
+  return {
+    analysis,
+    source,
+    analyzedAt: timestamp,
+    updatedAt: timestamp,
   }
 }

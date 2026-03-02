@@ -1,4 +1,4 @@
-groq
+openai
 pdfplumber
 python-docx
 python-dotenv

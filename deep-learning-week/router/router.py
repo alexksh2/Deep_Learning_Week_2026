@@ -2,7 +2,7 @@
 Step 3 — router.py
 ===================
 Loads the fine-tuned model and classifies queries into
-simple / medium / complex, then maps to a Claude model ID.
+simple / medium / complex, then maps to an OpenAI model ID.
 
 Used directly by server.py — not meant to be run standalone,
 but you can test it:
@@ -17,15 +17,15 @@ from transformers import pipeline
 
 MODEL_DIR = "models/router"
 
-# Maps router label → Ollama model name (override via env vars)
+# Maps router label → OpenAI model name (override via env vars)
 ROUTE_MAP = {
-    "simple":  os.getenv("OLLAMA_MODEL_FAST",    "llama3.2"),
-    "medium":  os.getenv("OLLAMA_MODEL",         "llama3.2"),
-    "complex": os.getenv("OLLAMA_MODEL_CAPABLE", "mistral"),
+    "simple":  os.getenv("OPENAI_MODEL_FAST",    "gpt-4o-mini"),
+    "medium":  os.getenv("OPENAI_MODEL",         "gpt-4o-mini"),
+    "complex": os.getenv("OPENAI_MODEL_CAPABLE", "gpt-4o"),
 }
 
 # Confidence threshold: if the top label score is below this,
-# fall back to medium (Sonnet) to avoid mis-routing edge cases.
+# fall back to medium to avoid mis-routing edge cases.
 CONFIDENCE_THRESHOLD = 0.70
 
 

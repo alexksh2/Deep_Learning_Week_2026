@@ -1,6 +1,8 @@
 import { spawn } from "child_process"
 import { NextResponse } from "next/server"
 import path from "path"
+import { getResumeAnalysis } from "@/lib/auth-db"
+import { buildResumeAnalysisContext } from "@/lib/resume-analysis-context"
 
 const SCRIPT = path.join(
   process.cwd(),
@@ -29,14 +31,24 @@ export async function POST(request: Request) {
     const body = await request.json() as {
       category: string
       total: number
+      email?: string
       context_block?: string
       messages: { role: "user" | "assistant"; content: string }[]
     }
 
+    const email = body.email?.trim().toLowerCase()
+    const storedResumeAnalysis = email ? getResumeAnalysis(email) : null
+    const mergedContextBlock = [
+      body.context_block ?? "",
+      storedResumeAnalysis ? buildResumeAnalysisContext(storedResumeAnalysis.analysis) : "",
+    ]
+      .filter((entry) => entry.trim().length > 0)
+      .join("\n\n")
+
     const args = [
       "--category",      body.category,
       "--total",         String(body.total),
-      "--context_block", body.context_block ?? "",
+      "--context_block", mergedContextBlock,
       "--messages",      JSON.stringify(body.messages),
     ]
 

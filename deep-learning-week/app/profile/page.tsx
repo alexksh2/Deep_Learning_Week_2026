@@ -33,7 +33,7 @@ export default function ProfilePage() {
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
-                className="rounded-none border-b-2 border-transparent data-[state=active]:border-foreground data-[state=active]:bg-transparent px-4 pb-2.5 pt-0 text-xs font-medium text-muted-foreground data-[state=active]:text-foreground transition-colors whitespace-nowrap"
+                className="rounded-none border-0 border-b-2 border-b-transparent data-[state=active]:border-b-foreground data-[state=active]:bg-transparent px-4 pb-2.5 pt-0 text-xs font-medium text-muted-foreground data-[state=active]:text-foreground transition-colors whitespace-nowrap outline-none focus-visible:ring-0"
               >
                 {tab.label}
               </TabsTrigger>

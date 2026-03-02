@@ -3,6 +3,7 @@ import { readFile, stat, unlink, writeFile } from "fs/promises"
 import os from "os"
 import path from "path"
 import { NextResponse } from "next/server"
+import { upsertResumeAnalysis } from "@/lib/auth-db"
 import { resolvePythonScriptPath } from "@/lib/python-paths"
 
 const RESUME_DIR = path.join(process.cwd(), "data", "resumes")
@@ -54,7 +55,8 @@ export async function POST(request: Request) {
     const fileInput = form.get("file")
     const useStored = form.get("useStored") === "true"
     const emailInput = form.get("email")
-    const email = typeof emailInput === "string" ? emailInput : null
+    const email = typeof emailInput === "string" ? emailInput.trim().toLowerCase() : null
+    const analysisSource = fileInput instanceof File ? "upload" : "profile"
 
     let analysisPath: string | null = null
     let tempPathToDelete: string | null = null
@@ -94,8 +96,8 @@ export async function POST(request: Request) {
       )
     }
 
-    if (!process.env.GROQ_API_KEY) {
-      return NextResponse.json({ error: "GROQ_API_KEY not configured" }, { status: 503 })
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "OPENAI_API_KEY not configured" }, { status: 503 })
     }
 
     if (!analysisPath) {
@@ -121,7 +123,7 @@ export async function POST(request: Request) {
       py.stdout.on("data", (d: Buffer) => { stdout += d.toString() })
       py.stderr.on("data", (d: Buffer) => { stderr += d.toString() })
 
-      // 2-min timeout (model loading + two Groq calls)
+      // 2-min timeout (model loading + two OpenAI calls)
       const timer = setTimeout(() => {
         py.kill()
         if (tempPathToDelete) {
@@ -147,12 +149,15 @@ export async function POST(request: Request) {
         }
 
         try {
-          const data = JSON.parse(stdout)
+          const data = JSON.parse(stdout) as Record<string, unknown>
+          if (email) {
+            upsertResumeAnalysis(email, data, analysisSource)
+          }
           resolve(NextResponse.json(data))
-        } catch {
+        } catch (error) {
           resolve(
             NextResponse.json(
-              { error: "Script returned invalid JSON" },
+              { error: error instanceof Error ? error.message : "Script returned invalid JSON" },
               { status: 500 },
             ),
           )

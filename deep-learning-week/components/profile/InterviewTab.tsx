@@ -39,13 +39,14 @@ const QUESTION_COUNTS = [3, 5, 10]
 async function callInterview(
   category: string,
   total: number,
+  email: string | undefined,
   contextBlock: string,
   messages: { role: "user" | "assistant"; content: string }[],
 ): Promise<{ content: string; type: "question" | "feedback"; score: number | null }> {
   const res = await fetch("/api/interview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category, total, context_block: contextBlock, messages }),
+    body: JSON.stringify({ category, total, email, context_block: contextBlock, messages }),
   })
   const data = await res.json()
   if (!res.ok || data.error) throw new Error(data.error ?? `Error ${res.status}`)
@@ -105,7 +106,7 @@ export function InterviewTab() {
     setError("")
     try {
       const apiMessages = history.map(m => ({ role: m.role, content: m.content }))
-      const result = await callInterview(category.label, questionCount, contextBlock, apiMessages)
+      const result = await callInterview(category.label, questionCount, user?.email, contextBlock, apiMessages)
 
       const assistantMsg: ChatMessage = {
         role:    "assistant",

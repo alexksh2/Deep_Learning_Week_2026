@@ -54,7 +54,7 @@ import pdfplumber
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
-# Load .env.local (Next.js style) so GROQ_API_KEY is available
+# Load .env.local (Next.js style) so OPENAI_API_KEY is available
 # ---------------------------------------------------------------------------
 for _candidate in [
     Path(__file__).parent.parent.parent / ".env.local",
@@ -68,11 +68,11 @@ for _candidate in [
 # Optional imports — graceful fallback if not installed
 # ---------------------------------------------------------------------------
 try:
-    from groq import Groq
-    _GROQ_AVAILABLE = True
+    from openai import OpenAI
+    _OPENAI_AVAILABLE = True
 except ImportError:
-    _GROQ_AVAILABLE = False
-    print("Warning: groq not installed — LLM parsing disabled, using text heuristics only.", file=sys.stderr)
+    _OPENAI_AVAILABLE = False
+    print("Warning: openai not installed — LLM parsing disabled, using text heuristics only.", file=sys.stderr)
 
 try:
     from docx import Document as DocxDocument
@@ -133,13 +133,13 @@ def extract_text(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Groq LLM helper
+# OpenAI LLM helper
 # ---------------------------------------------------------------------------
 
-class GroqLLM:
-    def __init__(self, model: str = "llama-3.3-70b-versatile") -> None:
+class OpenAILLM:
+    def __init__(self, model: str = "gpt-4o-mini") -> None:
         self.model = model
-        self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def generate(self, system: str, user: str, max_tokens: int = 1500) -> str:
         resp = self.client.chat.completions.create(
@@ -148,7 +148,7 @@ class GroqLLM:
             max_tokens=max_tokens,
             temperature=0.0,
         )
-        return resp.choices[0].message.content.strip()
+        return (resp.choices[0].message.content or "").strip()
 
 
 def _extract_json(text: str) -> str:
@@ -184,7 +184,7 @@ _RESUME_SCHEMA = """{
 }"""
 
 
-def parse_resume(text: str, llm: GroqLLM) -> Dict[str, Any]:
+def parse_resume(text: str, llm: OpenAILLM) -> Dict[str, Any]:
     user = (
         f"Return JSON matching EXACTLY:\n{_RESUME_SCHEMA}\n\n"
         "Rules:\n"
@@ -224,7 +224,7 @@ _PROFILE_SCHEMA = """{
 }"""
 
 
-def parse_profile(text: str, llm: GroqLLM) -> Dict[str, Any]:
+def parse_profile(text: str, llm: OpenAILLM) -> Dict[str, Any]:
     user = (
         f"Return JSON matching EXACTLY:\n{_PROFILE_SCHEMA}\n\n"
         "Extract from this profile export. Use null for missing fields.\n\n"
@@ -240,7 +240,7 @@ def parse_profile(text: str, llm: GroqLLM) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Heuristic fallback (no Groq) — simple keyword extraction from text
+# Heuristic fallback (no OpenAI) — simple keyword extraction from text
 # ---------------------------------------------------------------------------
 
 SKILL_KEYWORDS = [
@@ -392,12 +392,12 @@ def main() -> None:
             print(f"Warning: could not parse --trade JSON: {e}", file=sys.stderr)
 
     # ── Initialise LLM ───────────────────────────────────────────────────────
-    llm: Optional[GroqLLM] = None
-    if _GROQ_AVAILABLE and os.getenv("GROQ_API_KEY"):
-        llm = GroqLLM()
-        print("Groq LLM ready.", file=sys.stderr)
+    llm: Optional[OpenAILLM] = None
+    if _OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+        llm = OpenAILLM(model=os.getenv("OPENAI_MODEL_CONTEXT", os.getenv("OPENAI_MODEL", "gpt-4o-mini")))
+        print("OpenAI LLM ready.", file=sys.stderr)
     else:
-        print("Groq unavailable — using heuristic extraction.", file=sys.stderr)
+        print("OpenAI unavailable — using heuristic extraction.", file=sys.stderr)
 
     # ── Resume ───────────────────────────────────────────────────────────────
     resume_data: Dict[str, Any] = {}

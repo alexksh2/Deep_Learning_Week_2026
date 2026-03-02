@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:all": "concurrently -n ollama,next -c blue,green \"ollama serve\" \"next dev\"",
+    "dev:all": "next dev",
     "start": "next start",
     "build": "next build",
     "lint": "eslint ."

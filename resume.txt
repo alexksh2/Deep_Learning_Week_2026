@@ -13,3 +13,38 @@
   - Fields: personal, summary, experience, education, skills, projects, certifications, assessment
   - assessment.overall_score is 1–10 rendered as an SVG ring chart, colour-coded green/amber/red
   - assessment.quant_relevance gives 2–3 sentences on fit for quant roles
+
+                                                                                                 
+❯ how is the bounding box created what does it record                                            
+                                                                                                 
+⏺ It records the physical coordinates of text on the PDF page — where on the page the chunk's    
+  text actually appears.                                                                         
+                                                                                                 
+  BoundingBox(x0=50, y0=120, x1=562, y1=180)                                                     
+                                                                                                 
+  - x0, y0 — top-left corner of the text region                                                  
+  - x1, y1 — bottom-right corner                                                                 
+  - Units are points (1 point = 1/72 inch), measured from the top-left of the page               
+                  
+  ---                                                                                            
+  When pdfplumber is available, it reads the actual character coordinates from the PDF:
+
+  pdf_page = self.pdf.pages[page - 1]
+  chars = pdf_page.chars   # list of every character with its x0,y0,x1,y1
+  bbox_info = [{"x0": c["x0"], ...} for c in chars[:text_length]]
+  # then takes min/max to get the bounding rectangle of the whole chunk
+
+  So it scans the first text_length characters on that page and finds the tightest rectangle that
+   contains them all.
+
+  When pdfplumber is not available, it falls back to a rough estimate based on line count:
+  lines = max(1, text_length // 80)   # assume 80 chars per line
+  y_pos = 50 + ((page % 5) * 150)     # rough vertical position
+  BoundingBox(x0=50, y0=y_pos, x1=562, y1=y_pos + lines * 12)
+  This is essentially made up — just a plausible-looking rectangle.
+
+  ---
+  What it's intended for: if you had a PDF viewer in the frontend, you could use the bbox to
+  highlight the exact source passage on the page when the user clicks a citation — jump to page 3
+   and draw a yellow box around the paragraph that was cited. Currently nothing in the app uses
+  it, it's just stored in the metadata.

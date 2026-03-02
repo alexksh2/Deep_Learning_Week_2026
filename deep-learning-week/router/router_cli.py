@@ -8,9 +8,9 @@ Usage:
     python3 router_cli.py "What is the Sharpe ratio?"
 
 Outputs a single JSON line:
-    {"model": "llama3.2", "label": "simple", "confidence": 0.97}
+    {"model": "gpt-4o-mini", "label": "simple", "confidence": 0.97}
 
-Falls back to OLLAMA_MODEL (default: llama3.2) if the router model is not trained yet.
+Falls back to OPENAI_MODEL (default: gpt-4o-mini) if the router model is not trained yet.
 """
 
 import json
@@ -26,4 +26,4 @@ try:
     model_id, label, confidence = route(query)
     print(json.dumps({"model": model_id, "label": label, "confidence": confidence}))
 except Exception:
-    print(json.dumps({"model": os.getenv("OLLAMA_MODEL", "llama3.2"), "label": "default", "confidence": 1.0}))
+    print(json.dumps({"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"), "label": "default", "confidence": 1.0}))

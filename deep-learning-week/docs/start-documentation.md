@@ -26,12 +26,22 @@ npm install
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r router/requirements.txt
+pip install -r ml-development/etf-analysis/requirements.txt
 pip install -r ml-development/rag-pipeline/requirements.txt
+pip install -r ml-development/interview-pipeline/requirements.txt
 ```
 
 Notes:
-- `router/requirements.txt` contains query-router + Smart Beta dependencies.
-- `ml-development/rag-pipeline/requirements.txt` contains PDF RAG dependencies (including `faiss-cpu`).
+- `router/requirements.txt` — query-router + Smart Beta dependencies.
+- `ml-development/etf-analysis/requirements.txt` — ETF factor analysis (numpy, pandas, statsmodels, yfinance, tabulate).
+- `ml-development/rag-pipeline/requirements.txt` — PDF RAG dependencies (faiss-cpu, LangChain, sentence-transformers, openai).
+- `ml-development/interview-pipeline/requirements.txt` — interview pipeline (openai, pdfplumber).
+
+Alternative (installs every `requirements.txt` in this repo):
+
+```bash
+find . -name "requirements.txt" -type f -print0 | xargs -0 -I{} pip install -r "{}"
+```
 
 ## 5. Configure environment variables
 
@@ -106,6 +116,18 @@ pkill -f "next dev" 2>/dev/null; npm run dev
   - Ensure venv is active and install:
     ```bash
     pip install -r ml-development/rag-pipeline/requirements.txt
+    ```
+
+- Missing package from ETF analysis features
+  - Ensure venv is active and install:
+    ```bash
+    pip install -r ml-development/etf-analysis/requirements.txt
+    ```
+
+- Missing package from interview features
+  - Ensure venv is active and install:
+    ```bash
+    pip install -r ml-development/interview-pipeline/requirements.txt
     ```
 
 - Ollama connection errors

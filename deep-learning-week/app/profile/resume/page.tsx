@@ -146,6 +146,27 @@ export default function ResumeAnalyserPage() {
     void loadStoredResume()
   }, [loadStoredResume])
 
+  const loadSavedAnalysis = useCallback(async () => {
+    if (!user?.email) return
+    try {
+      const response = await fetch(
+        `/api/profile/resume/analysis?email=${encodeURIComponent(user.email)}`,
+        { cache: "no-store" },
+      )
+      if (!response.ok) return
+      const payload = (await response.json()) as { exists?: boolean; analysis?: ResumeData }
+      if (payload.exists && payload.analysis) {
+        setData(payload.analysis)
+      }
+    } catch {
+      // Silent failure: analysis can still be generated on demand.
+    }
+  }, [user?.email])
+
+  useEffect(() => {
+    void loadSavedAnalysis()
+  }, [loadSavedAnalysis])
+
   useEffect(() => {
     const onResumeUpdated = () => {
       void loadStoredResume()
@@ -174,6 +195,9 @@ export default function ResumeAnalyserPage() {
       if (source === "upload" && file) {
         await uploadStoredResume(file, user?.email)
         form.append("file", file)
+        if (user?.email) {
+          form.append("email", user.email)
+        }
       } else {
         form.append("useStored", "true")
         if (user?.email) {
@@ -231,7 +255,6 @@ export default function ResumeAnalyserPage() {
               onClick={() => {
                 setSource("profile")
                 setError(null)
-                setData(null)
               }}
             >
               Use Profile Resume

@@ -27,3 +27,12 @@
 ⏺ The key is min-h-0 — in a flex-col container, flex children default to min-height: auto which lets    
   them grow infinitely. min-h-0 overrides that so the div stays constrained to its flex allocation and  
   scrolls within it instead. 1
+
+  Best behavior is:
+
+Auto-index immediately on upload (you already do this).
+Show clear file states in composer: indexing, ready, failed.
+If user hits send while any attached file is still indexing, queue the message and auto-send when files are ready.
+Never silently fall back to plain chat when attachments are present.
+Offer explicit overrides: Send without files and Cancel queued.
+If a file fails, keep it marked failed with Retry/Remove, and proceed with ready files only if user confirms.

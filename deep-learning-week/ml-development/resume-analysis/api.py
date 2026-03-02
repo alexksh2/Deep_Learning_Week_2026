@@ -2,7 +2,7 @@
 Quant finance resume analyser — CLI subprocess.
 
 Usage:
-    pip install groq faiss-cpu sentence-transformers pdfplumber python-docx numpy python-dotenv
+    pip install openai faiss-cpu sentence-transformers pdfplumber python-docx numpy python-dotenv
     python3 api.py --file /path/to/resume.pdf
 
 Outputs a single JSON object to stdout. All diagnostic output goes to stderr.
@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import faiss
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 import pdfplumber
 from docx import Document
@@ -354,13 +354,13 @@ class SkillVectorStore:
 
 
 # ----------------------------
-# 4) Groq LLM
+# 4) OpenAI LLM
 # ----------------------------
 
-class GroqLLM:
-    def __init__(self, model_name: str = "llama-3.3-70b-versatile") -> None:
+class OpenAILLM:
+    def __init__(self, model_name: str = "gpt-4o-mini") -> None:
         self.model_name = model_name
-        self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def generate(self, system_prompt: str, user_prompt: str, max_tokens: int = 2000) -> str:
         response = self.client.chat.completions.create(
@@ -372,7 +372,7 @@ class GroqLLM:
             max_tokens=max_tokens,
             temperature=0.0,
         )
-        return response.choices[0].message.content.strip()
+        return (response.choices[0].message.content or "").strip()
 
 
 # ----------------------------
@@ -418,7 +418,7 @@ _EMPTY_RESUME: Dict[str, Any] = {
 }
 
 
-def parse_full_resume(text: str, llm: GroqLLM) -> Dict[str, Any]:
+def parse_full_resume(text: str, llm: OpenAILLM) -> Dict[str, Any]:
     user_prompt = (
         f"Return JSON matching EXACTLY this structure:\n{_PARSE_SCHEMA}\n\n"
         "Rules:\n"
@@ -483,7 +483,7 @@ def _extract_json_str(text: str) -> str:
     return text
 
 
-def extract_skills_with_retries(llm: GroqLLM, user_prompt: str, max_retries: int = 3) -> Dict[str, Any]:
+def extract_skills_with_retries(llm: OpenAILLM, user_prompt: str, max_retries: int = 3) -> Dict[str, Any]:
     up = user_prompt
     for attempt in range(max_retries):
         raw = llm.generate(_SKILL_SYSTEM, up)
@@ -576,7 +576,7 @@ def main() -> None:
     embedder = SentenceTransformerEmbedder()
     vector_store = SkillVectorStore(embedder)
     vector_store.build(get_taxonomy())
-    llm = GroqLLM()
+    llm = OpenAILLM(model_name=os.getenv("OPENAI_MODEL_RESUME", os.getenv("OPENAI_MODEL", "gpt-4o-mini")))
     print("Models ready.", file=sys.stderr)
 
     # Full structured parse (personal, experience, education, assessment…)

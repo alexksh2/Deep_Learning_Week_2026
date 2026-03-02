@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Button }       from "@/components/ui/button"
 import { Textarea }     from "@/components/ui/textarea"
-import { Badge }        from "@/components/ui/badge"
 import { Spinner }      from "@/components/ui/spinner"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -21,7 +20,7 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Mode = "chat" | "pdf"
+type AttachmentStatus = "indexing" | "ready" | "error"
 
 interface Citation {
   id:   string
@@ -44,11 +43,32 @@ interface Message {
   evaluation?: Evaluation
 }
 
+interface AttachedDocument {
+  id: string
+  name: string
+  indexDir: string | null
+  status: AttachmentStatus
+  error: string | null
+}
+
+interface QueuedSend {
+  conversationId: string
+  text: string
+}
+
+interface FailedSendConfirmation {
+  conversationId: string
+  text: string
+  hasReadyDocuments: boolean
+  failedDocumentNames: string[]
+}
+
 interface Conversation {
   id:        string
   title:     string
   model:     string
-  mode:      Mode
+  mode:      "chat"
+  documents: AttachedDocument[]
   messages:  Message[]
   createdAt: string
 }
@@ -56,13 +76,18 @@ interface Conversation {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MODELS = [
-  { id: "gemma:2b",              label: "Gemma 2B",    description: "Fast · best for quick questions" },
-  { id: "dolphin-mistral:7b",    label: "Mistral 7B",  description: "Balanced · recommended" },
-  { id: "vanilj/palmyra-fin-70b-32k", label: "Palmyra Fin 70B", description: "Finance-focused · deep analysis" },
+  { id: "gpt-4o-mini",           label: "GPT-4o mini", description: "Fast · best for quick questions" },
+  { id: "gpt-4o",                label: "GPT-4o",      description: "Balanced · recommended" },
   { id: "auto",                  label: "Auto",        description: "Router picks the best model" },
 ]
 
-const DEFAULT_MODEL = "gemma:2b"
+const DEFAULT_MODEL = "gpt-4o-mini"
+const DEFAULT_MODEL_LABEL = MODELS.find(m => m.id === DEFAULT_MODEL)?.label ?? DEFAULT_MODEL
+const MODEL_IDS = new Set(MODELS.map(m => m.id))
+
+function normalizeModel(value: unknown): string {
+  return typeof value === "string" && MODEL_IDS.has(value) ? value : DEFAULT_MODEL
+}
 
 const ASSESSMENT_COLOR: Record<string, string> = {
   well_supported:      "text-emerald-500",
@@ -195,7 +220,7 @@ function MessageBubble({
           )}
         </div>
 
-        {/* Citations + evaluation (PDF Chat mode only) */}
+        {/* Citations + evaluation (document-assisted responses) */}
         {!isUser && message.citations && (
           <CitationList citations={message.citations} evaluation={message.evaluation} />
         )}
@@ -212,23 +237,26 @@ export default function CoachingPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId,      setActiveId]      = useState<string | null>(null)
   const [model,         setModel]         = useState(DEFAULT_MODEL)
-  const [mode,          setMode]          = useState<Mode>("chat")
   const [input,         setInput]         = useState("")
   const [isStreaming,   setIsStreaming]    = useState(false)
   const [sidebarOpen,   setSidebarOpen]   = useState(true)
   const [apiError,      setApiError]      = useState("")
-
-  // PDF Chat state
-  const [pdfName,    setPdfName]    = useState("")
-  const [indexDir,   setIndexDir]   = useState<string | null>(null)
-  const [indexing,   setIndexing]   = useState(false)
-  const [indexError, setIndexError] = useState("")
+  const [queuedSend,    setQueuedSend]    = useState<QueuedSend | null>(null)
+  const [failedConfirmation, setFailedConfirmation] = useState<FailedSendConfirmation | null>(null)
 
   const scrollContainerRef  = useRef<HTMLDivElement>(null)
   const textareaRef         = useRef<HTMLTextAreaElement>(null)
   const fileInputRef        = useRef<HTMLInputElement>(null)
 
   const activeConversation = conversations.find(c => c.id === activeId) ?? null
+  const activeDocuments = activeConversation?.documents ?? []
+  const readyDocuments = activeDocuments.filter(d => d.status === "ready" && d.indexDir)
+  const hasIndexingDocuments = activeDocuments.some(d => d.status === "indexing")
+  const normalizedModel = normalizeModel(model)
+  const selectedModelLabel = MODELS.find(m => m.id === normalizedModel)?.label ?? DEFAULT_MODEL_LABEL
+  const queuedForActiveConversation = queuedSend && activeId === queuedSend.conversationId ? queuedSend : null
+  const failedConfirmationForActiveConversation =
+    failedConfirmation && activeId === failedConfirmation.conversationId ? failedConfirmation : null
 
   // Load conversations from DB on mount
   useEffect(() => {
@@ -237,35 +265,55 @@ export default function CoachingPage() {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data.conversations) && data.conversations.length > 0) {
-          const parsed = data.conversations.map((c: { id: string; title: string; model: string; mode: string; messages: Message[]; createdAt: string }) => ({
+          const parsed = data.conversations.map((c: {
+            id: string
+            title: string
+            model?: string | null
+            documents?: AttachedDocument[]
+            messages: Message[]
+            createdAt: string
+          }) => ({
             id: c.id,
             title: c.title,
-            model: c.model,
-            mode: c.mode as Mode,
+            model: normalizeModel(c.model),
+            mode: "chat" as const,
+            documents: Array.isArray(c.documents)
+              ? c.documents
+                  .filter((d): d is AttachedDocument => Boolean(d?.id && d?.name))
+                  .map((d) => ({
+                    id: d.id,
+                    name: d.name,
+                    indexDir: typeof d.indexDir === "string" ? d.indexDir : null,
+                    status: d.status === "ready" || d.status === "error" ? d.status : "error",
+                    error: d.status === "indexing"
+                      ? "Indexing was interrupted. Please re-upload this file."
+                      : d.error ?? null,
+                  }))
+              : [],
             messages: c.messages,
             createdAt: c.createdAt,
           }))
           setConversations(parsed)
           setActiveId(parsed[0].id)
+          setModel(normalizeModel(parsed[0].model))
         }
       })
       .catch(() => { /* ignore */ })
   }, [user?.email])
 
-  // Save to DB when streaming ends
+  // Persist active conversation after non-streaming updates.
   useEffect(() => {
     if (isStreaming) return
     if (!user?.email || !activeId) return
     const conv = conversations.find(c => c.id === activeId)
-    if (!conv || conv.messages.length === 0) return
+    if (!conv || (conv.messages.length === 0 && conv.documents.length === 0)) return
     const dbConv = { ...conv, updatedAt: new Date().toISOString() }
     fetch("/api/coaching/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: user.email, conversation: dbConv }),
     }).catch(() => { /* ignore */ })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStreaming])
+  }, [activeId, conversations, isStreaming, user?.email])
 
   // Auto-scroll — only when user is already near the bottom
   useEffect(() => {
@@ -277,11 +325,18 @@ export default function CoachingPage() {
 
   // ── Conversation management ────────────────────────────────────────────────
 
+  const createConversation = useCallback((title = "New conversation"): Conversation => ({
+    id: uid(),
+    title,
+    model: normalizedModel,
+    mode: "chat",
+    documents: [],
+    messages: [],
+    createdAt: new Date().toISOString(),
+  }), [normalizedModel])
+
   function newConversation() {
-    const convo: Conversation = {
-      id: uid(), title: "New conversation",
-      model, mode, messages: [], createdAt: new Date().toISOString(),
-    }
+    const convo = createConversation()
     setConversations(prev => [convo, ...prev])
     setActiveId(convo.id)
     setApiError("")
@@ -295,12 +350,29 @@ export default function CoachingPage() {
     }
   }
 
+  function ensureConversation(title?: string) {
+    if (activeId) return activeId
+    const convo = createConversation(title && title.trim() ? title : "New conversation")
+    setConversations(prev => [convo, ...prev])
+    setActiveId(convo.id)
+    if (user?.email) {
+      fetch("/api/coaching/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, conversation: { ...convo, updatedAt: convo.createdAt } }),
+      }).catch(() => { /* ignore */ })
+    }
+    return convo.id
+  }
+
   function deleteConversation(id: string) {
     setConversations(prev => {
       const next = prev.filter(c => c.id !== id)
       if (activeId === id) setActiveId(next[0]?.id ?? null)
       return next
     })
+    setQueuedSend(prev => (prev?.conversationId === id ? null : prev))
+    setFailedConfirmation(prev => (prev?.conversationId === id ? null : prev))
     if (user?.email) {
       fetch(`/api/coaching/conversations/${id}?email=${encodeURIComponent(user.email)}`, {
         method: "DELETE",
@@ -312,30 +384,67 @@ export default function CoachingPage() {
     setConversations(prev => prev.map(c => c.id === id ? updater(c) : c))
   }, [])
 
-  // ── PDF indexing ───────────────────────────────────────────────────────────
-
-  async function handlePdfUpload(file: File) {
-    setIndexing(true)
-    setIndexError("")
-    setPdfName(file.name)
-    try {
-      const form = new FormData()
-      form.append("file", file)
-      const res  = await fetch("/api/coaching/rag", { method: "POST", body: form })
-      const data = await res.json()
-      if (!res.ok) { setIndexError(data.error ?? "Indexing failed"); return }
-      setIndexDir(data.indexDir)
-    } catch (e) {
-      setIndexError(String(e))
-    } finally {
-      setIndexing(false)
-    }
+  function removeDocument(id: string) {
+    if (!activeId) return
+    updateConversation(activeId, c => ({
+      ...c,
+      documents: c.documents.filter(d => d.id !== id),
+    }))
+    setFailedConfirmation(prev => (prev?.conversationId === activeId ? null : prev))
   }
 
-  function clearPdf() {
-    setIndexDir(null)
-    setPdfName("")
-    setIndexError("")
+  function retryDocument(id: string) {
+    removeDocument(id)
+    fileInputRef.current?.click()
+  }
+
+  async function handleDocumentUpload(files: FileList | File[]) {
+    const selected = Array.from(files)
+    if (selected.length === 0) return
+
+    const convId = ensureConversation()
+    if (!convId) return
+
+    setFailedConfirmation(prev => (prev?.conversationId === convId ? null : prev))
+
+    const pending = selected.map(file => ({
+      id: uid(),
+      name: file.name,
+      indexDir: null,
+      status: "indexing" as const,
+      error: null,
+    }))
+
+    setApiError("")
+    updateConversation(convId, c => ({ ...c, documents: [...c.documents, ...pending] }))
+
+    await Promise.all(pending.map(async (doc, idx) => {
+      try {
+        const form = new FormData()
+        form.append("file", selected[idx])
+        const res = await fetch("/api/coaching/rag", { method: "POST", body: form })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? "Indexing failed")
+        updateConversation(convId, c => ({
+          ...c,
+          documents: c.documents.map(d =>
+            d.id === doc.id
+              ? { ...d, status: "ready", indexDir: data.indexDir, error: null }
+              : d
+          ),
+        }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        updateConversation(convId, c => ({
+          ...c,
+          documents: c.documents.map(d =>
+            d.id === doc.id
+              ? { ...d, status: "error", indexDir: null, error: message }
+              : d
+          ),
+        }))
+      }
+    }))
   }
 
   // ── Send — regular chat ────────────────────────────────────────────────────
@@ -351,7 +460,7 @@ export default function CoachingPage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, model, system: buildSystemPrompt(user) }),
+        body: JSON.stringify({ messages: history, model: normalizedModel, system: buildSystemPrompt(user) }),
       })
 
       if (!res.ok) {
@@ -394,74 +503,232 @@ export default function CoachingPage() {
     }
   }
 
-  // ── Send — PDF Chat ────────────────────────────────────────────────────────
+  type RagResponse = {
+    answer: string
+    citations?: Citation[]
+    evaluation?: Evaluation
+  }
 
-  async function handleRagSend(text: string, convId: string, asstId: string) {
-    if (!indexDir) { setApiError("Upload a document first."); return }
+  async function queryDocument(doc: AttachedDocument, question: string): Promise<RagResponse> {
+    const res = await fetch("/api/coaching/rag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, indexDir: doc.indexDir, evaluate: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error ?? `Error ${res.status}`)
+    }
+    return data as RagResponse
+  }
+
+  async function handleDocumentSend(text: string, convId: string, asstId: string, docs: AttachedDocument[]) {
+    if (docs.length === 0) return
     try {
-      const res  = await fetch("/api/coaching/rag", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ question: text, indexDir, evaluate: true }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setApiError(data.error ?? `Error ${res.status}`)
-        updateConversation(convId, c => ({ ...c, messages: c.messages.filter(m => m.id !== asstId) }))
-        return
+      const settled = await Promise.allSettled(docs.map(async (doc) => ({
+        doc,
+        data: await queryDocument(doc, text),
+      })))
+
+      const outputs = settled
+        .filter((item): item is PromiseFulfilledResult<{ doc: AttachedDocument; data: RagResponse }> => item.status === "fulfilled")
+        .map(item => item.value)
+
+      const failures = settled
+        .filter((item): item is PromiseRejectedResult => item.status === "rejected")
+        .map(item => (item.reason instanceof Error ? item.reason.message : String(item.reason)))
+
+      if (outputs.length === 0) {
+        throw new Error(failures[0] ?? "Failed to query attached documents")
       }
+
+      const combinedAnswer = outputs.length === 1
+        ? outputs[0].data.answer
+        : outputs.map(({ doc, data }) => `From ${doc.name}:\n${data.answer}`).join("\n\n")
+
+      const combinedCitations = outputs.flatMap(({ doc, data }) =>
+        (data.citations ?? []).map(citation => ({
+          id: `${doc.name} · ${citation.id}`,
+          page: citation.page,
+          text: citation.text,
+        }))
+      )
+
       updateConversation(convId, c => ({
         ...c,
         messages: c.messages.map(m =>
           m.id === asstId
-            ? { ...m, content: data.answer, citations: data.citations ?? [], evaluation: data.evaluation }
+            ? {
+                ...m,
+                content: combinedAnswer,
+                citations: combinedCitations,
+                evaluation: outputs.length === 1 ? outputs[0].data.evaluation : undefined,
+              }
             : m
         ),
       }))
-    } catch (e) {
-      setApiError(String(e))
+
+      if (failures.length > 0) {
+        setApiError(`Some documents failed during retrieval: ${failures[0]}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setApiError(message)
+      updateConversation(convId, c => ({ ...c, messages: c.messages.filter(m => m.id !== asstId) }))
     }
   }
 
-  // ── Unified send ──────────────────────────────────────────────────────────
+  type SendOptions = {
+    conversationId?: string
+    forceWithoutFiles?: boolean
+    confirmReadyOnly?: boolean
+    clearInput?: boolean
+  }
 
-  async function handleSend() {
-    const text = input.trim()
-    if (!text || isStreaming) return
-    if (mode === "pdf" && !indexDir) { setApiError("Upload a document first."); return }
-
-    let convId = activeId
-    if (!convId) {
-      const convo: Conversation = {
-        id: uid(), title: deriveTitle(text),
-        model, mode, messages: [], createdAt: new Date().toISOString(),
-      }
-      setConversations(prev => [convo, ...prev])
-      convId = convo.id
-      setActiveId(convId)
-    }
-
+  async function executeSend(
+    text: string,
+    convId: string,
+    docsForQuery: AttachedDocument[] | null,
+  ) {
     const userMsg: Message = { id: uid(), role: "user",      content: text, createdAt: new Date().toISOString() }
     const asstMsg: Message = { id: uid(), role: "assistant", content: "",   createdAt: new Date().toISOString() }
 
     updateConversation(convId, c => ({
       ...c,
+      model: normalizedModel,
       title:    c.messages.length === 0 ? deriveTitle(text) : c.title,
       messages: [...c.messages, userMsg, asstMsg],
     }))
-    setInput("")
     setApiError("")
     setIsStreaming(true)
 
-    if (mode === "chat") await handleChatSend(text, convId, asstMsg.id)
-    else                 await handleRagSend(text, convId, asstMsg.id)
+    if (docsForQuery && docsForQuery.length > 0) await handleDocumentSend(text, convId, asstMsg.id, docsForQuery)
+    else                                         await handleChatSend(text, convId, asstMsg.id)
 
     setIsStreaming(false)
+  }
+
+  async function attemptSend(rawText: string, options: SendOptions = {}) {
+    const text = rawText.trim()
+    if (!text || isStreaming) return
+
+    const convId = options.conversationId ?? ensureConversation()
+    if (!convId) return
+
+    if (options.clearInput) setInput("")
+
+    const conv = conversations.find(c => c.id === convId)
+    const attachedDocuments = conv?.documents ?? []
+    const indexingDocs = attachedDocuments.filter(d => d.status === "indexing")
+    const failedDocs = attachedDocuments.filter(d => d.status === "error")
+    const readyDocs = attachedDocuments.filter(d => d.status === "ready" && d.indexDir)
+
+    if (attachedDocuments.length > 0 && !options.forceWithoutFiles) {
+      if (indexingDocs.length > 0) {
+        setQueuedSend({ conversationId: convId, text })
+        setFailedConfirmation(null)
+        setApiError("Attached documents are still indexing. Message queued and will send automatically.")
+        return
+      }
+
+      if (failedDocs.length > 0 && readyDocs.length > 0 && !options.confirmReadyOnly) {
+        setFailedConfirmation({
+          conversationId: convId,
+          text,
+          hasReadyDocuments: true,
+          failedDocumentNames: failedDocs.map(d => d.name),
+        })
+        setQueuedSend(null)
+        setApiError("Some attached documents failed. Confirm to send using only ready documents.")
+        return
+      }
+
+      if (failedDocs.length > 0 && readyDocs.length === 0) {
+        setFailedConfirmation({
+          conversationId: convId,
+          text,
+          hasReadyDocuments: false,
+          failedDocumentNames: failedDocs.map(d => d.name),
+        })
+        setQueuedSend(null)
+        setApiError("All attached documents failed. Retry/remove files or explicitly send without files.")
+        return
+      }
+
+      if (readyDocs.length === 0) {
+        setApiError("Attached documents are not ready yet.")
+        return
+      }
+
+      setQueuedSend(null)
+      setFailedConfirmation(null)
+      await executeSend(text, convId, readyDocs)
+      return
+    }
+
+    setQueuedSend(null)
+    setFailedConfirmation(null)
+    await executeSend(text, convId, null)
+  }
+
+  function sendQueuedWithoutFiles() {
+    if (!queuedSend) return
+    const pending = queuedSend
+    setQueuedSend(null)
+    void attemptSend(pending.text, { conversationId: pending.conversationId, forceWithoutFiles: true })
+  }
+
+  function cancelQueuedSend() {
+    if (!queuedForActiveConversation) return
+    if (!input.trim()) setInput(queuedForActiveConversation.text)
+    setQueuedSend(null)
+  }
+
+  function confirmSendWithReadyDocuments() {
+    if (!failedConfirmation || !failedConfirmation.hasReadyDocuments) return
+    const pending = failedConfirmation
+    setFailedConfirmation(null)
+    void attemptSend(pending.text, { conversationId: pending.conversationId, confirmReadyOnly: true })
+  }
+
+  function sendFailedConfirmationWithoutFiles() {
+    if (!failedConfirmation) return
+    const pending = failedConfirmation
+    setFailedConfirmation(null)
+    void attemptSend(pending.text, { conversationId: pending.conversationId, forceWithoutFiles: true })
+  }
+
+  function cancelFailedConfirmation() {
+    if (!failedConfirmationForActiveConversation) return
+    if (!input.trim()) setInput(failedConfirmationForActiveConversation.text)
+    setFailedConfirmation(null)
+  }
+
+  // ── Unified send ──────────────────────────────────────────────────────────
+
+  async function handleSend() {
+    void attemptSend(input, { clearInput: true })
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
+
+  // Auto-send queued message once indexing completes.
+  useEffect(() => {
+    if (!queuedSend || isStreaming) return
+    const conv = conversations.find(c => c.id === queuedSend.conversationId)
+    if (!conv) {
+      setQueuedSend(null)
+      return
+    }
+    const hasIndexing = conv.documents.some(d => d.status === "indexing")
+    if (hasIndexing) return
+
+    const pending = queuedSend
+    setQueuedSend(null)
+    void attemptSend(pending.text, { conversationId: pending.conversationId })
+  }, [attemptSend, conversations, isStreaming, queuedSend])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -491,7 +758,7 @@ export default function CoachingPage() {
                 conversations.map(conv => (
                   <div
                     key={conv.id}
-                    onClick={() => { setActiveId(conv.id); setApiError(""); setMode(conv.mode) }}
+                    onClick={() => { setActiveId(conv.id); setApiError(""); setModel(normalizeModel(conv.model)) }}
                     className={cn(
                       "group flex cursor-pointer items-start justify-between gap-2 rounded-lg px-2 py-2 text-sm transition-colors",
                       activeId === conv.id
@@ -502,16 +769,11 @@ export default function CoachingPage() {
                     <div className="flex min-w-0 items-start gap-2">
                       <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-60" />
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="truncate text-xs font-medium">{conv.title}</p>
-                          {conv.mode === "pdf" && (
-                            <FileText className="h-2.5 w-2.5 shrink-0 text-chart-2" />
-                          )}
-                        </div>
+                        <p className="truncate text-xs font-medium">{conv.title}</p>
                         <p className="text-[10px] text-muted-foreground">
                           {new Date(conv.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                           {" · "}
-                          {conv.mode === "pdf" ? "PDF Chat" : (MODELS.find(m => m.id === conv.model)?.label ?? conv.model)}
+                          {MODELS.find(m => m.id === conv.model)?.label ?? conv.model}
                         </p>
                       </div>
                     </div>
@@ -543,48 +805,24 @@ export default function CoachingPage() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              {/* Mode toggle */}
-              <div className="flex rounded-lg border border-border bg-muted/40 p-0.5">
-                <button
-                  onClick={() => setMode("chat")}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                    mode === "chat"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >Chat</button>
-                <button
-                  onClick={() => setMode("pdf")}
-                  className={cn(
-                    "flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                    mode === "pdf"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <FileText className="h-3 w-3" /> PDF Chat
-                </button>
-              </div>
-
-              {/* Model selector — chat mode only */}
-              {mode === "chat" && (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="h-7 w-40 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    {MODELS.map(m => (
-                      <SelectItem key={m.id} value={m.id}>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-medium">{m.label}</span>
-                          <span className="text-[10px] text-muted-foreground">{m.description}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              <Select value={normalizedModel} onValueChange={value => setModel(normalizeModel(value))}>
+                <SelectTrigger className="h-7 w-40 text-xs">
+                  <SelectValue placeholder={DEFAULT_MODEL_LABEL} />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {MODELS.map(m => (
+                    <SelectItem key={m.id} value={m.id}>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium">
+                          {m.label}
+                          {m.id === DEFAULT_MODEL ? " (Default)" : ""}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">{m.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -602,37 +840,32 @@ export default function CoachingPage() {
               {!activeConversation || activeConversation.messages.length === 0 ? (
                 <div className="flex flex-col items-center gap-4 py-16 text-center">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold shadow">
-                    {mode === "pdf" ? <FileText className="h-7 w-7" /> : "Q"}
+                    Q
                   </div>
                   <div className="space-y-1">
-                    <p className="font-semibold">
-                      {mode === "pdf" ? "PDF Chat" : "Quant Coach"}
-                    </p>
+                    <p className="font-semibold">Quant Coach</p>
                     <p className="text-sm text-muted-foreground">
-                      {mode === "pdf"
-                        ? "Upload a PDF, DOCX, or TXT document then ask questions. Answers include inline citations and a confidence score."
-                        : "Ask anything about quant finance, math, trading, or your career path."}
+                      Ask anything about quant finance, math, trading, or your career path.
+                      Attach PDF, DOCX, or TXT files to ground answers in your documents.
                     </p>
                   </div>
 
-                  {mode === "chat" && (
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {[
-                        "Explain Ito's lemma intuitively",
-                        "What is market microstructure?",
-                        "How do I prep for quant interviews?",
-                        "Review my trading discipline",
-                      ].map(prompt => (
-                        <button
-                          key={prompt}
-                          onClick={() => { setInput(prompt); textareaRef.current?.focus() }}
-                          className="rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-muted hover:text-foreground"
-                        >
-                          {prompt}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {[
+                      "Explain Ito's lemma intuitively",
+                      "What is market microstructure?",
+                      "How do I prep for quant interviews?",
+                      "Review my trading discipline",
+                    ].map(prompt => (
+                      <button
+                        key={prompt}
+                        onClick={() => { setInput(prompt); textareaRef.current?.focus() }}
+                        className="rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:bg-muted hover:text-foreground"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 activeConversation.messages.map((msg, i) => (
@@ -649,15 +882,115 @@ export default function CoachingPage() {
           {/* Input area */}
           <div className="border-t border-border px-4 py-3">
             <div className="mx-auto max-w-2xl">
-              {mode === "pdf" && (
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.txt,.docx"
-                  className="sr-only"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f) }}
-                />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.txt,.docx"
+                multiple
+                className="sr-only"
+                onChange={e => {
+                  const files = e.target.files
+                  if (files && files.length > 0) void handleDocumentUpload(files)
+                  e.currentTarget.value = ""
+                }}
+              />
+
+              {activeDocuments.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {activeDocuments.map(doc => (
+                    <div
+                      key={doc.id}
+                      title={doc.error ?? doc.name}
+                      className={cn(
+                        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-[10px]",
+                        doc.status === "error"
+                          ? "border-destructive/40 bg-destructive/10 text-destructive"
+                          : "border-border bg-muted/40 text-muted-foreground",
+                      )}
+                    >
+                      <FileText className="h-3 w-3 shrink-0" />
+                      <span className="max-w-40 truncate">{doc.name}</span>
+                      {doc.status === "indexing" ? (
+                        <Spinner className="h-3 w-3 shrink-0" />
+                      ) : doc.status === "error" ? (
+                        <button
+                          onClick={() => retryDocument(doc.id)}
+                          className="rounded px-1 py-0.5 text-[9px] font-medium text-destructive underline-offset-2 hover:underline"
+                        >
+                          Retry
+                        </button>
+                      ) : (
+                        <span className="text-[9px] text-emerald-600">ready</span>
+                      )}
+                      <button
+                        onClick={() => removeDocument(doc.id)}
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                        aria-label={`Remove ${doc.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
+
+              {queuedForActiveConversation && (
+                <div className="mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-800">
+                  <p className="mb-1 line-clamp-2">
+                    Queued while indexing: "{queuedForActiveConversation.text}"
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={sendQueuedWithoutFiles}
+                      className="rounded border border-amber-600/40 px-2 py-0.5 text-[10px] font-medium hover:bg-amber-500/10"
+                    >
+                      Send without files
+                    </button>
+                    <button
+                      onClick={cancelQueuedSend}
+                      className="rounded border border-amber-600/40 px-2 py-0.5 text-[10px] font-medium hover:bg-amber-500/10"
+                    >
+                      Cancel queued
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {failedConfirmationForActiveConversation && (
+                <div className="mb-2 rounded-lg border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
+                  <p className="mb-1">
+                    {failedConfirmationForActiveConversation.hasReadyDocuments
+                      ? "Some attachments failed. Confirm how to send this message."
+                      : "All attachments failed. Retry/remove files or send without files."}
+                  </p>
+                  <p className="mb-1 line-clamp-1 text-[10px] opacity-90">
+                    Failed: {failedConfirmationForActiveConversation.failedDocumentNames.join(", ")}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {failedConfirmationForActiveConversation.hasReadyDocuments && (
+                      <button
+                        onClick={confirmSendWithReadyDocuments}
+                        className="rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                      >
+                        Use ready files
+                      </button>
+                    )}
+                    <button
+                      onClick={sendFailedConfirmationWithoutFiles}
+                      className="rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                    >
+                      Send without files
+                    </button>
+                    <button
+                      onClick={cancelFailedConfirmation}
+                      className="rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-end gap-2 rounded-xl border border-input bg-background px-3 py-2 focus-within:ring-1 focus-within:ring-ring">
                 <Textarea
                   ref={textareaRef}
@@ -665,39 +998,38 @@ export default function CoachingPage() {
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={
-                    mode === "pdf"
-                      ? indexDir
-                        ? "Ask a question about your document… (Enter to send)"
-                        : "Attach a document to start chatting…"
-                      : "Ask your quant coach… (Enter to send, Shift+Enter for newline)"
+                    readyDocuments.length > 0
+                      ? "Ask about your attached documents… (Enter to send)"
+                      : activeDocuments.length > 0 && hasIndexingDocuments
+                        ? "Documents are indexing. Send now to queue automatically…"
+                        : activeDocuments.length > 0
+                          ? "Attachments failed. Retry/remove or send without files…"
+                          : "Ask your quant coach… (Enter to send, Shift+Enter for newline)"
                   }
-                  disabled={mode === "pdf" && !indexDir}
                   rows={1}
-                  className="flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 max-h-40 disabled:cursor-not-allowed"
+                  className="flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 max-h-40"
                 />
-                {mode === "pdf" && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 shrink-0"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={indexing || isStreaming}
-                      >
-                        {indexing ? <Spinner className="h-4 w-4" /> : <Paperclip className="h-4 w-4" />}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Attach PDF / TXT / DOCX</TooltipContent>
-                  </Tooltip>
-                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isStreaming}
+                    >
+                      {hasIndexingDocuments ? <Spinner className="h-4 w-4" /> : <Paperclip className="h-4 w-4" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Attach PDF / TXT / DOCX</TooltipContent>
+                </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       size="icon"
                       className="h-8 w-8 shrink-0"
                       onClick={handleSend}
-                      disabled={!input.trim() || isStreaming || (mode === "pdf" && !indexDir)}
+                      disabled={!input.trim() || isStreaming}
                     >
                       {isStreaming ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />}
                     </Button>
@@ -705,23 +1037,15 @@ export default function CoachingPage() {
                   <TooltipContent>Send (Enter)</TooltipContent>
                 </Tooltip>
               </div>
-              {mode === "pdf" && indexError && (
-                <p className="mt-1.5 text-center text-[10px] text-destructive">{indexError}</p>
-              )}
-              {mode === "pdf" ? (
-                <div className="mt-1.5 flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{indexDir ? `PDF Chat · ${pdfName} · RAG + Claude Sonnet` : "PDF Chat · attach a document to begin"}</span>
-                  {indexDir && (
-                    <button onClick={clearPdf} className="text-muted-foreground hover:text-foreground" aria-label="Clear attached document">
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-                  {`${MODELS.find(m => m.id === model)?.label} · Conversations are saved to your account`}
-                </p>
-              )}
+              <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
+                {`${selectedModelLabel} · Default: ${DEFAULT_MODEL_LABEL} · ${
+                  readyDocuments.length > 0
+                    ? `${readyDocuments.length} document${readyDocuments.length > 1 ? "s" : ""} ready`
+                    : activeDocuments.length > 0
+                      ? `${activeDocuments.length} document${activeDocuments.length > 1 ? "s" : ""} attached`
+                      : "Conversations are saved to your account"
+                }`}
+              </p>
             </div>
           </div>
         </div>

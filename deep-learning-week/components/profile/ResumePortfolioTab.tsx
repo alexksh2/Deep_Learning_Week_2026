@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, ExternalLink, Eye, FileText, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { AlertCircle, ExternalLink, Eye, FileText, Loader2, Plus, Trash2, Upload } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -142,8 +142,8 @@ export function ResumePortfolioTab() {
                 disabled={resumeUpdating}
                 onClick={() => replaceInputRef.current?.click()}
               >
-                {resumeUpdating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {resume.exists ? "Replace" : "Upload"}
+                {resumeUpdating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                Upload
               </Button>
               <input
                 ref={replaceInputRef}
