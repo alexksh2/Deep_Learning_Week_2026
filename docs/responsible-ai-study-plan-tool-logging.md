@@ -2,6 +2,10 @@
 
 This system uses an agentic planner to generate readiness study plans. To support responsible AI review, every tool call is traced and every generation request is written to an audit log.
 
+For the broader Responsible AI policy, governance model, and release gates across all AI subsystems, see:
+
+- `docs/responsible-ai-framework.md`
+
 ## Agent tools
 
 The study-plan agent currently exposes two tools:

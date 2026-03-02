@@ -8,18 +8,21 @@ This repository is implemented as a Next.js application with Python subprocess p
 
 1. [Problem Framing](#problem-framing)
 2. [System Overview](#system-overview)
-3. [Problem Statement Coverage](#problem-statement-coverage)
-4. [Architecture](#architecture)
-5. [Learning State Model](#learning-state-model)
-6. [AI Components](#ai-components)
-7. [Responsible AI](#responsible-ai)
-8. [Data Stores and Privacy](#data-stores-and-privacy)
-9. [API Reference](#api-reference)
-10. [Local Development](#local-development)
-11. [Operations and Diagnostics](#operations-and-diagnostics)
-12. [Known Limitations](#known-limitations)
-13. [Recommended Next Steps](#recommended-next-steps)
-14. [Repository Map](#repository-map)
+3. [Project Documentation Requirement (PDF only)](#project-documentation-requirement-pdf-only)
+4. [Demonstrating Solution Uniqueness](#demonstrating-solution-uniqueness)
+5. [Key Innovations and Features](#key-innovations-and-features)
+6. [Problem Statement Coverage](#problem-statement-coverage)
+7. [Architecture](#architecture)
+8. [Learning State Model](#learning-state-model)
+9. [AI Components](#ai-components)
+10. [Responsible AI](#responsible-ai)
+11. [Data Stores and Privacy](#data-stores-and-privacy)
+12. [API Reference](#api-reference)
+13. [Local Development](#local-development)
+14. [Operations and Diagnostics](#operations-and-diagnostics)
+15. [Known Limitations](#known-limitations)
+16. [Recommended Next Steps](#recommended-next-steps)
+17. [Repository Map](#repository-map)
 
 ## Problem Framing
 
@@ -49,6 +52,86 @@ Core product surfaces:
 - `Profile`: Resume analysis, interview practice, readiness diagnostics, settings.
 
 This architecture allows the platform to model learning as non-linear and cross-context, rather than only quiz-score based.
+
+## Project Documentation Requirement (PDF only)
+
+For judging/submission, prepare a single comprehensive PDF (`Project_Documentation.pdf`). This is the primary document judges will review.
+
+Required sections in the PDF:
+
+- Methodology used to define the problem, metrics, and evaluation setup.
+- Technical approach and architecture actually implemented in this repository.
+- Demonstration of what makes this solution unique versus baseline alternatives.
+- Results (quantitative and qualitative) with clear measurement context.
+- Testing procedures (how you tested, what passed/failed, and known gaps).
+- Observations from experiments, development, and user-flow behavior.
+- Key findings and practical conclusions.
+
+Required quality bar:
+
+- Be explicit and honest about what is implemented now vs. planned future work.
+- Avoid unverifiable claims; every major claim should map to code, logs, or outputs in this repo.
+- Include claim-to-code traceability (example: endpoint, script, and file path references).
+
+Suggested evidence mapping pattern:
+
+- Feature/claim
+- Implementation location (file paths)
+- Verification method (manual test, API call, script output, audit log)
+- Result status (working/partial/not implemented)
+
+## Demonstrating Solution Uniqueness
+
+This section is judge-facing and concrete. Use it to prove differentiation with artifacts from this repo.
+
+### Uniqueness Proof Matrix
+
+| Unique capability | Typical baseline | QLOS behavior (implemented) | Evidence to show judges | Learner impact |
+| --- | --- | --- | --- | --- |
+| Cross-signal readiness scoring | Single metric (usually quiz score only) | Composite readiness blends Theory/Implementation/Execution/Communication with explicit weights and fallback handling. | `components/profile/ReadinessTab.tsx` (composite formula and fallback logic), `app/profile/readiness/page.tsx` | Recommendations adapt to more than one data source, reducing false confidence from one-off quiz performance. |
+| Auditable agentic planning with safe fallback | Opaque recommendation text without execution trace | Study-plan endpoint returns `toolTrace`, `auditId`, `source`, and writes append-only NDJSON audit records; deterministic fallback still returns a plan when agent path fails. | `app/api/profile/readiness/study-plan/route.ts`, `ml-development/readiness-agent/study_plan_agent.py`, `data/responsible-ai/study-plan-tool-audit.ndjson` | Planning remains available and reviewable even during model/tool failures. |
+| Behavioral execution analytics (not PnL-only) | Outcome-only feedback (profit/loss) | Computes fat-finger risk, revenge-trade risk, stop-loss discipline, slippage sensitivity, then derives risk/execution/composite readiness signals. | `app/api/alpaca/behavioral/route.ts`, `/api/alpaca/behavioral` response payload | Coaching targets execution habits, not only returns, improving discipline and consistency. |
+| Citation-grounded coaching with claim support checks | Free-form answers without source checking | RAG returns citation IDs/pages/text previews and optional claim-level support evaluation (`supported/partial/unsupported/uncited`). | `app/api/coaching/rag/route.ts`, `ml-development/rag-pipeline/rag_cli.py`, `/api/coaching/rag` output | Users can verify claims and detect weakly supported statements. |
+| Cost/latency-aware model routing | Same model for every query | DistilBERT router classifies simple/medium/complex, maps to model IDs, and hard-falls back in 2s to avoid blocking chat. Router decision is exposed via response headers. | `app/api/chat/route.ts`, `router/router.py`, `router/router_cli.py` | Better response-time/cost balance while keeping complex-query quality. |
+| Mistake taxonomy + confidence + recovery persistence | Only final quiz score is stored | Tracks mistake types (`Conceptual/Careless/Implementation`), per-question confidence, and in-progress recovery state, then persists it by user + quiz. | `app/learn/quiz/[id]/page.tsx`, `lib/quiz-progress.ts`, `lib/types.ts`, `/api/learn/quiz-progress` | Follow-up study can target the type of error, not just the aggregate score. |
+
+### Concrete Demo Sequence (What judges should see)
+
+1. Open readiness view and show weighted composite plus source-level explanations in `Readiness` UI.
+2. Trigger study-plan generation and show returned `auditId`, `toolTrace`, and `source` from `/api/profile/readiness/study-plan`.
+3. Show audit-log rows in `data/responsible-ai/study-plan-tool-audit.ndjson`:
+   - agent path examples with `toolCount: 2`, `source: "agent"`
+   - fallback example with `toolCount: 0`, `source: "fallback"`
+4. Run/inspect `/api/alpaca/behavioral` and point to behavior-derived fields (`fatFingerRisk`, `revengeTradeRisk`, `stopLossDiscipline`, `slippageSensitivity`, `composite`).
+5. Run one RAG query and show `citations` plus `evaluation` in the returned payload.
+6. Run one quiz and show results card with mistake taxonomy and persisted progress.
+
+### Before/After Example Template (Fill with your own run data)
+
+- Baseline output: "Your score is 72%. Review Chapter 3."
+- QLOS output: Composite readiness + weakest component + targeted session plan with measurable target and evidence link.
+- Verification artifacts: readiness payload, study-plan response (`auditId`), audit-log row, and corresponding code paths listed above.
+
+## Key Innovations and Features
+
+Core innovations:
+
+- Multi-signal readiness modeling across quiz, interview, resume, and behavioral execution data.
+- Agentic readiness planning with structured tool traces and deterministic fallback safety.
+- Query complexity router that selects model strategy using a Python classifier.
+- Evidence-aware RAG coaching with citations and optional claim-support scoring.
+- Behavioral learning loop that links simulator trade behavior to personalized coaching priorities.
+- Responsible-AI-first design with append-only audit trails for high-impact planning actions.
+
+Key product features:
+
+- Dashboard with readiness breakdown, momentum trend, and recommended actions.
+- Learn module with quiz confidence, mistake taxonomy, and persistence/recovery tracking.
+- Interview pipeline with scoring metadata and stored historical results.
+- Resume analysis pipeline that extracts structured evidence and recommendation signals.
+- Trade analytics with Alpaca integration and smart-beta diagnostics.
+- Coaching assistant with chat history and document-grounded Q&A.
+- Profile workspace for settings, skill matrix, readiness diagnostics, and next-step planning.
 
 ## Problem Statement Coverage
 
@@ -177,6 +260,11 @@ Skill matrix model includes:
 ## Responsible AI
 
 Responsible AI is a first-class requirement in this project. Current controls are strongest in the readiness planning subsystem and partially implemented in RAG and interview flows.
+
+Detailed framework:
+
+- `docs/responsible-ai-framework.md`
+- `docs/responsible-ai-study-plan-tool-logging.md`
 
 ### Responsible AI Principles Used
 
@@ -330,6 +418,7 @@ App URL:
 Useful docs:
 
 - `docs/start-documentation.md`
+- `docs/responsible-ai-framework.md`
 - `docs/responsible-ai-study-plan-tool-logging.md`
 - `docs/view-registered-records.md`
 
