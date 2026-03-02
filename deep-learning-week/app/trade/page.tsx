@@ -41,14 +41,11 @@ import {
   Crosshair,
   Eye,
 } from "lucide-react"
-import {
-  behavioralMetrics,
-  tradingReadiness,
-  coachingInsights,
-} from "@/lib/mock"
+import { coachingInsights } from "@/lib/mock"
 import type { MasteryTrend } from "@/lib/types"
 import type { SessionSummary } from "@/app/api/alpaca/sessions/route"
 import type { PerformancePoint } from "@/app/api/alpaca/performance/route"
+import type { BehavioralSignals } from "@/app/api/alpaca/behavioral/route"
 
 function TrendArrow({ trend }: { trend: MasteryTrend }) {
   if (trend === "up") return <TrendingUp className="h-3.5 w-3.5 text-chart-2" />
@@ -57,19 +54,22 @@ function TrendArrow({ trend }: { trend: MasteryTrend }) {
 }
 
 export default function TradePage() {
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [sessions,    setSessions]    = useState<SessionSummary[]>([])
   const [performance, setPerformance] = useState<PerformancePoint[]>([])
-  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [behavioral,  setBehavioral]  = useState<BehavioralSignals | null>(null)
+  const [sessionsLoading,    setSessionsLoading]    = useState(true)
   const [performanceLoading, setPerformanceLoading] = useState(true)
+  const [behavioralLoading,  setBehavioralLoading]  = useState(true)
 
   useEffect(() => {
     let active = true
 
     async function loadTradeData() {
       try {
-        const [sessionsRes, perfRes] = await Promise.all([
+        const [sessionsRes, perfRes, behavioralRes] = await Promise.all([
           fetch("/api/alpaca/sessions"),
           fetch("/api/alpaca/performance?period=1M&timeframe=1D"),
+          fetch("/api/alpaca/behavioral"),
         ])
 
         if (!active) return
@@ -87,18 +87,21 @@ export default function TradePage() {
         } else {
           setPerformance([])
         }
+
+        if (behavioralRes.ok) {
+          setBehavioral(await behavioralRes.json())
+        }
       } finally {
         if (active) {
           setSessionsLoading(false)
           setPerformanceLoading(false)
+          setBehavioralLoading(false)
         }
       }
     }
 
     loadTradeData()
-    return () => {
-      active = false
-    }
+    return () => { active = false }
   }, [])
 
   const equityData = performance.map((point) => ({
@@ -132,20 +135,20 @@ export default function TradePage() {
                     <Info className="h-3.5 w-3.5 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent className="text-xs max-w-64">
-                    {tradingReadiness.explanation}
+                    {behavioral?.explanation ?? "Loading…"}
                   </TooltipContent>
                 </Tooltip>
               </div>
               <span className="text-3xl font-bold tabular-nums font-mono">
-                {tradingReadiness.composite}
+                {behavioralLoading ? "—" : (behavioral?.composite ?? 0)}
               </span>
             </div>
-            <Progress value={tradingReadiness.composite} className="h-2 mb-4" />
+            <Progress value={behavioral?.composite ?? 0} className="h-2 mb-4" />
             <div className="grid gap-3 sm:grid-cols-3">
               {[
-                { label: "Risk Discipline", value: tradingReadiness.riskDiscipline, icon: Shield },
-                { label: "Execution Quality", value: tradingReadiness.executionQuality, icon: Crosshair },
-                { label: "Regime Awareness", value: tradingReadiness.regimeAwareness, icon: Eye },
+                { label: "Risk Discipline",   value: behavioral?.riskDiscipline   ?? 0, icon: Shield },
+                { label: "Execution Quality", value: behavioral?.executionQuality ?? 0, icon: Crosshair },
+                { label: "Stop-Loss Use",     value: behavioral?.stopLossDiscipline ?? 0, icon: Eye },
               ].map((item) => (
                 <div key={item.label} className="flex items-center gap-3 rounded-md border border-border p-3">
                   <item.icon className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -253,31 +256,31 @@ export default function TradePage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
-                label: "Overtrading Index",
-                value: behavioralMetrics.overtradingIndex,
-                trend: behavioralMetrics.overtradingTrend,
-                interpretation: "Elevated. Your trade count in recent sessions exceeds optimal thresholds.",
+                label: "Fat Finger Risk",
+                value: behavioral?.fatFingerRisk ?? 0,
+                trend: behavioral?.fatFingerTrend ?? "flat" as MasteryTrend,
+                interpretation: "% of orders where qty exceeded 2× your own median order size.",
                 bad: true,
               },
               {
                 label: "Revenge Trade Risk",
-                value: behavioralMetrics.revengeTradeRisk,
-                trend: "up" as MasteryTrend,
-                interpretation: "High. Pattern of increasing position size after losses detected.",
+                value: behavioral?.revengeTradeRisk ?? 0,
+                trend: behavioral?.revengeTradeTrend ?? "flat" as MasteryTrend,
+                interpretation: "Market orders placed within 5 min of a prior fill on the same symbol.",
                 bad: true,
               },
               {
                 label: "Stop-Loss Discipline",
-                value: behavioralMetrics.stopLossDiscipline,
-                trend: behavioralMetrics.stopLossTrend,
-                interpretation: "Below target. Stop-loss was moved or ignored in 1 of 5 recent sessions.",
-                bad: true,
+                value: behavioral?.stopLossDiscipline ?? 0,
+                trend: behavioral?.stopLossTrend ?? "flat" as MasteryTrend,
+                interpretation: "% of active trading days where a stop or stop-limit order was executed (filled).",
+                bad: false,
               },
               {
-                label: "Slippage Sensitivity",
-                value: behavioralMetrics.slippageSensitivity,
-                trend: behavioralMetrics.slippageTrend,
-                interpretation: "Moderate. Market orders during wide spreads contributing to excess costs.",
+                label: "Slippage Score",
+                value: behavioral?.slippageSensitivity ?? 0,
+                trend: behavioral?.slippageTrend ?? "flat" as MasteryTrend,
+                interpretation: "Avg slippage on filled limit orders in bps, inverted to 0–100. Higher = tighter fills.",
                 bad: false,
               },
             ].map((signal) => (

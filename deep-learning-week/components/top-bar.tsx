@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Search, Bell, BellRing, BookOpen, Flame, Moon, Settings2, Sun, TrendingUp } from "lucide-react"
+import { Search, Bell, BellRing, BookOpen, Flame, Moon, Settings2, Sun, TrendingUp, X } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -73,7 +73,7 @@ export function TopBar() {
   const [notificationFilter, setNotificationFilter] = useState<NotificationFilter>("all")
   const { resolvedTheme, setTheme } = useTheme()
   const { user, logout } = useAuth()
-  const { notifications, unreadCount, markAsRead, markAllAsRead, clearAll } = useNotifications()
+  const { notifications, unreadCount, markAsRead, removeNotification, markAllAsRead, clearAll } = useNotifications()
   const router = useRouter()
 
   const displayName = user?.name ?? userProfile.name
@@ -188,17 +188,16 @@ export function TopBar() {
                 ) : (
                   <div className="p-2">
                     {filteredNotifications.map((item) => (
-                      <DropdownMenuItem
+                      <div
                         key={item.id}
-                        onSelect={() => markAsRead(item.id)}
-                        className="mb-1 cursor-pointer rounded-lg p-0 focus:bg-transparent"
-                        asChild
+                        className={`mb-1 flex items-start gap-2 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/60 ${
+                          item.read ? "border-transparent bg-transparent" : "border-border bg-muted/40"
+                        }`}
                       >
                         <a
                           href={item.href}
-                          className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/60 ${
-                            item.read ? "border-transparent bg-transparent" : "border-border bg-muted/40"
-                          }`}
+                          onClick={() => markAsRead(item.id)}
+                          className="flex min-w-0 flex-1 items-start gap-3"
                         >
                           <div className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${categoryTone(item.category)}`}>
                             {categoryIcon(item.category)}
@@ -219,7 +218,18 @@ export function TopBar() {
                             <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.body}</p>
                           </div>
                         </a>
-                      </DropdownMenuItem>
+                        {item.read && (
+                          <button
+                            type="button"
+                            onClick={() => removeNotification(item.id)}
+                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            aria-label="Clear read notification"
+                            title="Clear"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Info, X, Check } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,14 +11,38 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Separator } from "@/components/ui/separator"
 import { careerIntentData } from "@/lib/mock"
 import type { TargetRole, TargetTimeline, CareerIntentData } from "@/lib/types"
+import { useAuth } from "@/contexts/AuthContext"
+import { loadStoredCareerIntent, saveStoredCareerIntent } from "@/lib/profile-client-state"
 
 const roles: TargetRole[] = ["Quant Research", "Quant Trading", "Quant Dev", "Data Science", "Risk", "SWE"]
 const timelines: TargetTimeline[] = ["1-3 months", "3-6 months", "6-12 months", "12+ months"]
 
 export function CareerIntentCard() {
+  const { user } = useAuth()
   const [intent, setIntent] = useState<CareerIntentData>(careerIntentData)
+  const [isHydrated, setIsHydrated] = useState(false)
   const [firmInput, setFirmInput] = useState("")
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    const authDefault: CareerIntentData = user
+      ? {
+          targetRole: user.targetRole,
+          targetTimeline: user.targetTimeline,
+          targetFirms: [...user.targetFirms],
+          preferResearchHeavy: user.preferResearchHeavy,
+          preferLowLatency: user.preferLowLatency,
+          preferDiscretionary: user.preferDiscretionary,
+        }
+      : { ...careerIntentData, targetFirms: [...careerIntentData.targetFirms] }
+    setIntent(loadStoredCareerIntent(authDefault))
+    setIsHydrated(true)
+  }, [user])
+
+  useEffect(() => {
+    if (!isHydrated) return
+    saveStoredCareerIntent(intent)
+  }, [intent, isHydrated])
 
   const addFirm = () => {
     const trimmed = firmInput.trim()

@@ -53,8 +53,8 @@ export function SettingsTab() {
   const setPrivacy = (key: keyof ProfileSettings["privacy"], v: boolean) =>
     setSettings(p => ({ ...p, privacy: { ...p.privacy, [key]: v } }))
 
-  const handleExport = () => {
-    downloadProfileExport(user)
+  const handleExport = async () => {
+    await downloadProfileExport(user)
     setExportDone(true)
     setTimeout(() => setExportDone(false), 2000)
   }

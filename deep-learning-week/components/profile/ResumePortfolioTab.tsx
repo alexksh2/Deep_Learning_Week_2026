@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { FileText, Eye, RefreshCw, Plus, Trash2, ExternalLink } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { QuickActionsCard } from "@/components/profile/QuickActionsCard"
 import { resumeMetadata, portfolioLinks as initialLinks } from "@/lib/mock"
 import type { PortfolioLink, LinkCategory } from "@/lib/types"
+import { loadStoredPortfolioLinks, saveStoredPortfolioLinks } from "@/lib/profile-client-state"
 
 const categories: LinkCategory[] = ["GitHub", "Website", "LinkedIn", "Project"]
 
@@ -23,9 +24,20 @@ const categoryColor: Record<LinkCategory, string> = {
 export function ResumePortfolioTab() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [links, setLinks] = useState<PortfolioLink[]>(initialLinks)
+  const [isHydrated, setIsHydrated] = useState(false)
   const [newLabel, setNewLabel] = useState("")
   const [newUrl, setNewUrl] = useState("")
   const [newCat, setNewCat] = useState<LinkCategory>("GitHub")
+
+  useEffect(() => {
+    setLinks(loadStoredPortfolioLinks(initialLinks.map((link) => ({ ...link }))))
+    setIsHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isHydrated) return
+    saveStoredPortfolioLinks(links)
+  }, [links, isHydrated])
 
   const addLink = () => {
     if (!newLabel.trim() || !newUrl.trim()) return

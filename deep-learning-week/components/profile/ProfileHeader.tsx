@@ -15,8 +15,8 @@ export function ProfileHeader() {
   const [mockFile, setMockFile] = useState<string | null>(null)
   const [exportDone, setExportDone] = useState(false)
 
-  const handleExport = () => {
-    downloadProfileExport(user)
+  const handleExport = async () => {
+    await downloadProfileExport(user)
     setExportDone(true)
     window.setTimeout(() => setExportDone(false), 2000)
   }

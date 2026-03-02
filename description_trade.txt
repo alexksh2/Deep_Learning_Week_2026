@@ -1,0 +1,144 @@
+                                                                                        
+  New /api/alpaca/behavioral endpoint — fetches last 500 orders and computes:
+
+  ┌─────────────────────┬─────────────────────────────────────────────────────────────┐   
+  │       Signal        │                           Formula                           │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤   
+  │ Overtrading Index   │ avg filled/day ÷ 10 × 100                                   │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Revenge Trade Risk  │ market re-entries within 5 min on same symbol ÷ total fills │
+  │                     │  × 500                                                      │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Stop-Loss           │ days with stop/stop_limit orders ÷ total trading days       │
+  │ Discipline          │                                                             │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Limit Order Rate    │ limit+stop_limit orders ÷ total orders                      │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Risk Discipline     │ (StopLoss + (100 − RevengeRisk)) ÷ 2                        │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Execution Quality   │ (LimitRate + (100 − Overtrading)) ÷ 2                       │
+  ├─────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ Composite           │ (RiskDiscipline + ExecutionQuality) ÷ 2                     │
+  └─────────────────────┴─────────────────────────────────────────────────────────────┘
+
+  Trends are computed by comparing the last 5 trading days against the 5 before that — so
+  they reflect recent direction, not static values.
+
+
+❯ yes                                                                                     
+                                                                                        
+⏺ Read 1 file (ctrl+o to expand)                                                          
+                                                                                        
+⏺ Update(app/api/alpaca/behavioral/route.ts)                                              
+  ⎿  Added 29 lines, removed 10 lines                                                     
+      110    // Invert: up in stop-loss discipline is good, so keep as-is                 
+      111    const stopLossTrend = rawStopTrend                                           
+      112                                                                                 
+      113 -  // ── Slippage Sensitivity (0–100, higher = better)                          
+          -──────────────────                                                             
+      114 -  // limit-order usage rate — more limit orders = better execution             
+          -discipline                                                                     
+      115 -  const totalOrders  = orders.length || 1                               
+      116 -  const limitOrders  = orders.filter(o => o.type === "limit" || o.type  
+          -=== "stop_limit").length                                                
+      117 -  const slippageSensitivity = Math.round((limitOrders / totalOrders) *  
+          -100)                                                                    
+      113 +  // ── Slippage (avg bps on filled limit orders; score 0–100, higher = 
+          + better) ──                                                             
+      114 +  // slippage_bps = abs(filled_avg_price − limit_price) / limit_price × 
+          + 10,000                                                                 
+      115 +  // Cap at 50 bps as worst case, invert to a score: score = 100 −      
+          +min(avgBps / 50 × 100, 100)                                             
+      116 +  const MAX_BPS = 50                                                    
+      117  
+      118 -  function limitRate(dateset: Set<string>) {                            
+      118 +  function avgSlippageBps(subset: AlpacaOrder[]): number | null {       
+      119 +    const filledLimits = subset.filter(                                 
+      120 +      o => (o.type === "limit" || o.type === "stop_limit") &&           
+      121 +           o.status === "filled" &&                                     
+      122 +           o.filled_avg_price != null &&                                
+      123 +           o.limit_price != null                                        
+      124 +    )                                                                   
+      125 +    if (!filledLimits.length) return null                               
+      126 +    const totalBps = filledLimits.reduce((sum, o) => {                  
+      127 +      const fill  = parseFloat(o.filled_avg_price!)                     
+      128 +      const limit = parseFloat(o.limit_price!)                          
+      129 +      return sum + (Math.abs(fill - limit) / limit) * 10_000            
+      130 +    }, 0)                                                               
+      131 +    return totalBps / filledLimits.length                               
+      132 +  }                                                                     
+      133 +                                                                        
+      134 +  const overallBps = avgSlippageBps(orders)                             
+      135 +  const slippageSensitivity = overallBps == null                        
+      136 +    ? 50  // no limit orders yet — neutral                              
+      137 +    : Math.round(100 - Math.min(overallBps / MAX_BPS * 100, 100))       
+      138 +                                                                        
+      139 +  function slippageScore(dateset: Set<string>): number {                
+      140      const subset = orders.filter(o => dateset.has((o.filled_at ??
+           o.created_at).split("T")[0]))
+      141 -    if (!subset.length) return 50                                       
+      142 -    const limits = subset.filter(o => o.type === "limit" || o.type ===  
+          -"stop_limit").length                                                    
+      143 -    return Math.round((limits / subset.length) * 100)                   
+      141 +    const bps = avgSlippageBps(subset)                                  
+      142 +    return bps == null ? 50 : Math.round(100 - Math.min(bps / MAX_BPS * 
+          + 100, 100))                                                             
+      143    }
+      144 -  const slippageTrend = trend(limitRate(recentDates), limitRate         
+          -(priorDates))                                                           
+      144 +  const slippageTrend = trend(slippageScore(recentDates), slippageScore 
+          +(priorDates))                                                           
+      145  
+      146    // ── Derived readiness scores
+           ────────────────────────────────────────
+      147    const riskDiscipline   = Math.round((stopLossDiscipline + (100 -
+           revengeTradeRisk)) / 2)
+
+⏺ Now update the label and interpretation in the trade page:
+                                                                                        
+⏺ Update(app/trade/page.tsx)                   
+  ⎿  Added 2 lines, removed 2 lines                                                     
+      277                  bad: false,                                                    
+      278                },                                                        
+      279                {                                                                
+      280 -                label: "Limit Order Rate",                              
+      280 +                label: "Slippage Score",                                       
+      281                  value: behavioral?.slippageSensitivity ?? 0,            
+      282                  trend: behavioral?.slippageTrend ?? "flat" as
+           MasteryTrend,
+      283 -                interpretation: "% of orders using limit or stop-limit  
+          -types. Higher = better execution discipline.",                          
+      283 +                interpretation: "Avg slippage on filled limit orders in 
+          + bps, inverted to 0–100. Higher = tighter fills.",                      
+      284                  bad: false,
+      285                },
+
+  ⏺ Done. The signal now measures actual fill quality:
+                                                                                        
+  - For each filled limit order: |filled_avg_price − limit_price| / limit_price × 10,000 =
+   slippage in bps
+  - Average across all filled limit orders                                                
+  - Invert to a score: 0 bps → 100, 50+ bps → 0 (50 bps used as worst-case ceiling)
+  - No limit orders yet → neutral 50 until data accumulates                               
+  - Trend compares avg bps in the last 5 trading days vs the 5 before
+
+
+  ⏺ Directly from the code in app/api/alpaca/behavioral/route.ts:
+
+  Stop-Loss Discipline (0–100, higher = better)
+  daysWithStops / totalDays × 100
+  % of trading days where at least one stop or stop_limit order was placed. Measures presence of stops, not whether
+  they were honoured.
+
+  Risk Discipline (0–100, higher = better)
+  (stopLossDiscipline + (100 − revengeTradeRisk)) / 2
+  Average of stop-loss discipline and inverted revenge trade risk. Drops if you stop placing stops or start rapid
+  re-entering.
+
+  Execution Quality (0–100, higher = better)
+  (slippageSensitivity + (100 − fatFingerRisk)) / 2
+  Average of slippage score and inverted fat finger risk. Drops if your limit fills are sloppy or you place oversized
+  orders.
+
+  Composite
+  (riskDiscipline + executionQuality) / 2

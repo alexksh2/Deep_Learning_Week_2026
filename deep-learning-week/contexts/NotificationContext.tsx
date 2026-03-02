@@ -31,6 +31,7 @@ type NotificationContextValue = {
   unreadCount: number
   addNotification: (notification: NotificationInput) => void
   markAsRead: (id: string) => void
+  removeNotification: (id: string) => void
   markAllAsRead: () => void
   clearAll: () => void
 }
@@ -152,6 +153,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     setNotifications((prev) => prev.map((item) => (item.id === id ? { ...item, read: true } : item)))
   }, [])
 
+  const removeNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
   const markAllAsRead = useCallback(() => {
     setNotifications((prev) => prev.map((item) => ({ ...item, read: true })))
   }, [])
@@ -168,10 +173,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       unreadCount,
       addNotification,
       markAsRead,
+      removeNotification,
       markAllAsRead,
       clearAll,
     }),
-    [notifications, unreadCount, addNotification, markAsRead, markAllAsRead, clearAll],
+    [notifications, unreadCount, addNotification, markAsRead, removeNotification, markAllAsRead, clearAll],
   )
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>

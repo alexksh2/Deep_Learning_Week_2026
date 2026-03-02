@@ -1,15 +1,16 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Check, X, Plus } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { aspirationsData, careerIntentData } from "@/lib/mock"
-import type { AspirationsData, LearningStylePref, RiskTolerancePref } from "@/lib/types"
+import type { AspirationsData } from "@/lib/types"
+import { useAuth } from "@/contexts/AuthContext"
+import { loadStoredAspirations, saveStoredAspirations } from "@/lib/profile-client-state"
 
 const allStrengths = [
   "Probability & Statistics", "Python Engineering", "Systematic Thinking", "Mathematical Rigor",
@@ -19,7 +20,6 @@ const allWeaknesses = [
   "Execution Discipline", "C++ Systems", "Pressure Management", "Microstructure Depth",
   "Communication", "Optimization Theory", "Regime Detection", "Short-term Focus",
 ]
-const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 function TagSelector({
   selected, options, onToggle, onAdd,
@@ -90,8 +90,34 @@ function TagSelector({
 }
 
 export function AspirationsTab() {
+  const { user } = useAuth()
   const [form, setForm] = useState<AspirationsData>(aspirationsData)
+  const [isHydrated, setIsHydrated] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    const authDefault: AspirationsData = user
+      ? {
+          ...aspirationsData,
+          northStar: user.northStar || aspirationsData.northStar,
+          learningStyle: user.learningStyle,
+          hoursPerWeek: user.hoursPerWeek,
+          availableDays: [...user.availableDays],
+        }
+      : {
+          ...aspirationsData,
+          strengths: [...aspirationsData.strengths],
+          weaknesses: [...aspirationsData.weaknesses],
+          availableDays: [...aspirationsData.availableDays],
+        }
+    setForm(loadStoredAspirations(authDefault))
+    setIsHydrated(true)
+  }, [user])
+
+  useEffect(() => {
+    if (!isHydrated) return
+    saveStoredAspirations(form)
+  }, [form, isHydrated])
 
   const toggle = (field: "strengths" | "weaknesses", value: string) =>
     setForm(prev => ({
@@ -105,14 +131,6 @@ export function AspirationsTab() {
     setForm(prev => ({
       ...prev,
       [field]: prev[field].includes(value) ? prev[field] : [...prev[field], value],
-    }))
-
-  const toggleDay = (day: string) =>
-    setForm(prev => ({
-      ...prev,
-      availableDays: prev.availableDays.includes(day)
-        ? prev.availableDays.filter(d => d !== day)
-        : [...prev.availableDays, day],
     }))
 
   const handleSave = () => {
@@ -178,86 +196,6 @@ export function AspirationsTab() {
             <div className="space-y-2">
               <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Weaknesses to fix</label>
               <TagSelector selected={form.weaknesses} options={allWeaknesses} onToggle={v => toggle("weaknesses", v)} onAdd={v => addCustom("weaknesses", v)} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="p-4 gap-0">
-          <CardHeader className="p-0 mb-3">
-            <CardTitle className="text-sm font-semibold">Learning Cadence</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Learning style</label>
-                <Select value={form.learningStyle} onValueChange={v => setForm(p => ({ ...p, learningStyle: v as LearningStylePref }))}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(["drills", "projects", "theory-first", "mixed"] as LearningStylePref[]).map(s => (
-                      <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Hours / week</label>
-                <Select
-                  value={String(form.hoursPerWeek)}
-                  onValueChange={v => setForm(p => ({ ...p, hoursPerWeek: Number(v) }))}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[5, 10, 15, 20, 25, 30].map(h => (
-                      <SelectItem key={h} value={String(h)} className="text-xs">{h}h / week</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Available days</label>
-              <div className="flex gap-1.5">
-                {weekDays.map(d => (
-                  <button
-                    key={d}
-                    onClick={() => toggleDay(d)}
-                    className={`w-9 h-8 rounded text-[11px] font-medium border transition-colors ${
-                      form.availableDays.includes(d)
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border text-muted-foreground hover:border-primary/40"
-                    }`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Risk tolerance in paper trading
-                </label>
-                <span className="text-[10px] text-muted-foreground italic">(drills only)</span>
-              </div>
-              <Select value={form.riskTolerancePref} onValueChange={v => setForm(p => ({ ...p, riskTolerancePref: v as RiskTolerancePref }))}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(["conservative", "balanced", "aggressive"] as RiskTolerancePref[]).map(r => (
-                    <SelectItem key={r} value={r} className="text-xs capitalize">{r}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-muted-foreground">
-                Controls drill difficulty and volatility of simulated scenarios. Has no effect on real or live trading.
-              </p>
             </div>
           </CardContent>
         </Card>

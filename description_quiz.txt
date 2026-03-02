@@ -25,3 +25,182 @@
 
   So if you bomb a quiz, the retry for that quiz jumps to the top, followed by drills/lessons for your weak
   topics.
+
+
+
+❯ ease factor is derived from the difficulty and not the true actual score                
+                                                                                        
+⏺ You're right — the ease factor only reflects how the user self-rates flashcard          
+  difficulty, not whether they actually got quiz answers correct. The retention estimate
+  should be grounded in real quiz scores with a time decay (the actual Ebbinghaus curve). 
+  Let me find the learn page to understand what quiz data is available:
+                                                                                          
+⏺ Searched for 3 patterns (ctrl+o to expand)                
+                                                                                          
+⏺ Good — quizProgressById is already loaded with attempts[].score and attempts[].date.
+  I'll replace the ease-factor proxy with an Ebbinghaus forgetting curve applied to actual
+   quiz scores:                                                                           
+                                               
+  Formula per quiz: retained = latestScore × e^(−daysSince / stability)                   
+  where stability (days to forget 63%) is derived from the score itself — higher score =  
+  longer-lasting memory.                                                                  
+                                                                                          
+⏺ Read 1 file (ctrl+o to expand)                            
+                                                                                        
+⏺ Update(app/learn/page.tsx)                        
+  ⎿  Added 14 lines, removed 5 lines                                                    
+      371    const randomCards = randomCardPool                                           
+      372      .map((id) => cards.find((card) => card.id === id))                  
+      373      .filter((card): card is SRCard => Boolean(card))                           
+      374 -  const retentionEstimate = cards.length === 0                                 
+      375 -    ? 0                                                                        
+      376 -    : Math.round(                                                              
+      377 -      (cards.reduce((sum, c) => sum + Math.min(c.easeFactor / 3, 1), 0) 
+          - / cards.length) * 100                                                  
+      378 -    )                                                                   
+      374 +  const retentionEstimate = (() => {                                    
+      375 +    const todayMs = Date.now()                                          
+      376 +    const attempted = Object.values(quizProgressById)                   
+      377 +      .map(p => p.attempts[0])   // latest attempt is first             
+      378 +      .filter(Boolean)                                                  
+      379 +    if (attempted.length === 0) return 0                                
+      380 +    const scores = attempted.map(a => {                                 
+      381 +      const daysSince = Math.max(0, (todayMs - new                      
+          +Date(a.date).getTime()) / 86_400_000)                                   
+      382 +      // Stability: days before 63% is forgotten — scales with how well 
+          + they scored                                                            
+      383 +      const stability = a.score >= 85 ? 21 : a.score >= 70 ? 14 :       
+          +a.score >= 50 ? 7 : 3                                                   
+      384 +      return a.score * Math.exp(-daysSince / stability)                 
+      385 +    })                                                                  
+      386 +    return Math.round(scores.reduce((s, v) => s + v, 0) /               
+          +scores.length)                                                          
+      387 +  })()                                                                  
+      388    const sessionActive = sessionQueue.length > 0
+      389    const sessionComplete = sessionActive && sessionIndex >=
+           sessionQueue.length
+      390    const currentSessionCard =
+
+⏺ Done. Here's how it now works:                    
+                                                                                        
+  Per attempted quiz:                          
+  retained = latestScore × e^(−daysSince / stability)
+                                                                                          
+  ┌────────────┬───────────────────────┬──────────────┬───────────────┐
+  │ Last score │ Stability (half-life) │ After 7 days │ After 21 days │                   
+  ├────────────┼───────────────────────┼──────────────┼───────────────┤
+  │ ≥ 85%      │ 21 days               │ 71%          │ 37%           │
+  ├────────────┼───────────────────────┼──────────────┼───────────────┤
+  │ 70–84%     │ 14 days               │ 61%          │ 22%           │
+  ├────────────┼───────────────────────┼──────────────┼───────────────┤
+  │ 50–69%     │ 7 days                │ 37%          │ 5%            │
+  ├────────────┼───────────────────────┼──────────────┼───────────────┤
+  │ < 50%      │ 3 days                │ 10%          │ ~0%           │
+  └────────────┴───────────────────────┴──────────────┴───────────────┘
+
+  Retention estimate = average retained score across all attempted quizzes.
+
+  Key differences from before:
+  - Grounded in real quiz scores — not self-rated flashcard difficulty
+  - Decays with time — a quiz you aced 3 weeks ago contributes less than one you aced
+  yesterday
+  - Falls to 0 when no quizzes attempted — honest baseline instead of a misleading default
+   from mock ease factors
+
+✻ Baked for 60s                                     
+                                                                                        
+❯ 1which means that you need to store the scores right                                    
+                                                                                        
+⏺ Yes — let me verify the quiz progress is actually being persisted to SQLite and not just
+   held in memory:                                                                      
+                                                                                          
+⏺ Searched for 2 patterns, read 1 file (ctrl+o to expand)                                 
+                                                                                          
+⏺ The scores are already being stored. The full chain is solid:
+                                                                                          
+  1. Quiz submit (handleSubmit in app/learn/quiz/[id]/page.tsx) → calls                   
+  saveQuizProgress("completed", updatedAttempts, null)
+  2. API (POST /api/learn/quiz-progress) → calls upsertQuizProgress                       
+  3. SQLite (quiz_progress table) → stores attempts as a JSON array containing { date,    
+  score, timeSeconds, mistakeBreakdown }                                                  
+  4. Learn page load → GET /api/learn/quiz-progress?email= → populates quizProgressById   
+  5. Retention formula → reads quizProgressById[id].attempts[0].score and .date
+
+  So the retention estimate now correctly reads real persisted scores from SQLite and
+  applies the Ebbinghaus decay. Nothing extra needed.
+
+❯ did it store the scores for each user id                                                
+                                                                                        
+⏺ Yes — the quiz_progress table uses a composite primary key of (quiz_id, user_email), so 
+  every row is scoped to a specific user:                                               
+                                                                                          
+  -- from auth-db.ts                                                                      
+  CREATE TABLE IF NOT EXISTS quiz_progress (                                              
+    quiz_id    TEXT NOT NULL,                                                             
+    user_email TEXT NOT NULL,                                                             
+    ...                                                     
+    PRIMARY KEY (quiz_id, user_email)   -- ← one row per quiz per user
+  );
+
+  And every read/write is filtered by email:
+
+  // write
+  INSERT OR REPLACE INTO quiz_progress ... WHERE user_email = @user_email
+
+  // read all quizzes for a user
+  SELECT * FROM quiz_progress WHERE user_email = ?
+
+  // read one quiz for a user
+  SELECT * FROM quiz_progress WHERE user_email = ? AND quiz_id = ?
+
+  So user A and user B taking the same quiz get separate rows — their scores, attempts,
+  and in-progress state are fully isolated. The retention estimate on the learn page only
+  pulls the logged-in user's rows via GET /api/learn/quiz-progress?email=<their email>.
+⏺ You're right — I mismatched the data. SR flashcards have no right/wrong answer, only    
+  hard/good/easy ratings which drive the ease factor. The quiz scores are a separate      
+  system. The correct approach is to apply the Ebbinghaus curve to the SR cards themselves
+   using ease factor as memory strength and lastReview for time decay:                    
+                                                                                          
+  R = e^(−daysSince / stability) where stability is derived from the ease factor.
+                                                                                          
+⏺ Update(app/learn/page.tsx)                                
+  ⎿  Added 7 lines, removed 9 lines                                                     
+      372      .map((id) => cards.find((card) => card.id === id))                  
+      373      .filter((card): card is SRCard => Boolean(card))                    
+      374    const retentionEstimate = (() => {                                           
+      375 +    const reviewed = cards.filter(c => c.lastReview)                    
+      376 +    if (reviewed.length === 0) return 0                                        
+      377      const todayMs = Date.now()                                          
+      378 -    const attempted = Object.values(quizProgressById)                   
+      379 -      .map(p => p.attempts[0])   // latest attempt is first             
+      380 -      .filter(Boolean)                                                  
+      381 -    if (attempted.length === 0) return 0                                
+      382 -    const scores = attempted.map(a => {                                 
+      383 -      const daysSince = Math.max(0, (todayMs - new                      
+          -Date(a.date).getTime()) / 86_400_000)                                   
+      384 -      // Stability: days before 63% is forgotten — scales with how well 
+          - they scored                                                            
+      385 -      const stability = a.score >= 85 ? 21 : a.score >= 70 ? 14 :       
+          -a.score >= 50 ? 7 : 3                                                   
+      386 -      return a.score * Math.exp(-daysSince / stability)                 
+      378 +    const scores = reviewed.map(c => {                                  
+      379 +      const daysSince = Math.max(0, (todayMs - new                      
+          +Date(c.lastReview!).getTime()) / 86_400_000)                            
+      380 +      // Map ease factor (1.3–3.0) to stability in days (3–30)          
+      381 +      const stability = ((c.easeFactor - 1.3) / (3.0 - 1.3)) * 27 + 3   
+      382 +      return Math.exp(-daysSince / stability) * 100                     
+      383      })
+      384      return Math.round(scores.reduce((s, v) => s + v, 0) /
+           scores.length)
+      385    })()
+
+⏺ How it works now:                               
+                                                                                        
+  - Only reviewed cards count — cards with no lastReview are excluded (unreviewed ≠
+  retained)
+  - Ease factor → stability: ease 1.3 (always forgotten) maps to 3-day stability; ease 3.0
+   (always easy) maps to 30-day stability
+  - Time decay: e^(−daysSince / stability) — a card rated "easy" repeatedly stays near    
+  100% for weeks; one rated "again" repeatedly drops to near 0% within days
+  - No quiz scores involved — entirely driven by the hard/good/easy session ratings, which
+   is the correct signal for SR

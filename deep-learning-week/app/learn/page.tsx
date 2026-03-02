@@ -371,11 +371,18 @@ function LearnContent() {
   const randomCards = randomCardPool
     .map((id) => cards.find((card) => card.id === id))
     .filter((card): card is SRCard => Boolean(card))
-  const retentionEstimate = cards.length === 0
-    ? 0
-    : Math.round(
-      (cards.reduce((sum, c) => sum + Math.min(c.easeFactor / 3, 1), 0) / cards.length) * 100
-    )
+  const retentionEstimate = (() => {
+    const reviewed = cards.filter(c => c.lastReview)
+    if (reviewed.length === 0) return 0
+    const todayMs = Date.now()
+    const scores = reviewed.map(c => {
+      const daysSince = Math.max(0, (todayMs - new Date(c.lastReview!).getTime()) / 86_400_000)
+      // Map ease factor (1.3–3.0) to stability in days (3–30)
+      const stability = ((c.easeFactor - 1.3) / (3.0 - 1.3)) * 27 + 3
+      return Math.exp(-daysSince / stability) * 100
+    })
+    return Math.round(scores.reduce((s, v) => s + v, 0) / scores.length)
+  })()
   const sessionActive = sessionQueue.length > 0
   const sessionComplete = sessionActive && sessionIndex >= sessionQueue.length
   const currentSessionCard =

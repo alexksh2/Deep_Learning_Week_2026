@@ -2,6 +2,7 @@ import type { AuthUser } from "@/lib/auth-types"
 import type { AspirationsData, CareerIntentData, ProfileIdentity } from "@/lib/types"
 import {
   aspirationsData,
+  buildSkillMatrix,
   careerIntentData,
   interviewPacks,
   portfolioLinks,
@@ -14,6 +15,13 @@ import {
   skillMatrix,
   tradingReadiness,
 } from "@/lib/mock"
+import type { SkillEntry } from "@/lib/types"
+import type { StoredQuizProgress } from "@/lib/quiz-progress"
+import {
+  loadStoredAspirations,
+  loadStoredCareerIntent,
+  loadStoredPortfolioLinks,
+} from "@/lib/profile-client-state"
 
 type PublicAuthUser = Omit<AuthUser, "password">
 
@@ -45,6 +53,13 @@ export interface ProfileExportPayload {
   settings: typeof profileSettings
 }
 
+type ProfileExportOverrides = {
+  careerIntent?: CareerIntentData
+  aspirations?: AspirationsData
+  portfolioLinks?: typeof portfolioLinks
+  skillsMatrix?: SkillEntry[]
+}
+
 function toPublicAuthUser(user: AuthUser): PublicAuthUser {
   return {
     name: user.name,
@@ -68,7 +83,10 @@ function toPublicAuthUser(user: AuthUser): PublicAuthUser {
   }
 }
 
-export function buildProfileExportPayload(user: AuthUser | null): ProfileExportPayload {
+export function buildProfileExportPayload(
+  user: AuthUser | null,
+  overrides: ProfileExportOverrides = {},
+): ProfileExportPayload {
   const identity: ProfileIdentity = user
     ? {
         name: user.name,
@@ -82,7 +100,7 @@ export function buildProfileExportPayload(user: AuthUser | null): ProfileExportP
       }
     : { ...profileIdentity, tracks: [...profileIdentity.tracks] }
 
-  const careerIntent: CareerIntentData = user
+  const defaultCareerIntent: CareerIntentData = user
     ? {
         targetRole: user.targetRole,
         targetTimeline: user.targetTimeline,
@@ -93,7 +111,74 @@ export function buildProfileExportPayload(user: AuthUser | null): ProfileExportP
       }
     : { ...careerIntentData, targetFirms: [...careerIntentData.targetFirms] }
 
-  const aspirations: AspirationsData = user
+  const defaultAspirations: AspirationsData = user
+    ? {
+        ...aspirationsData,
+        northStar: user.northStar || aspirationsData.northStar,
+        learningStyle: user.learningStyle,
+        hoursPerWeek: user.hoursPerWeek,
+        availableDays: [...user.availableDays],
+      }
+    : {
+        ...aspirationsData,
+        strengths: [...aspirationsData.strengths],
+        weaknesses: [...aspirationsData.weaknesses],
+        availableDays: [...aspirationsData.availableDays],
+      }
+
+  const careerIntent = overrides.careerIntent ?? defaultCareerIntent
+  const aspirations = overrides.aspirations ?? defaultAspirations
+  const currentPortfolioLinks = overrides.portfolioLinks ?? portfolioLinks
+  const currentSkillMatrix = overrides.skillsMatrix ?? skillMatrix
+
+  return {
+    metadata: {
+      exportedAt: new Date().toISOString(),
+      formatVersion: 1,
+    },
+    account: user ? toPublicAuthUser(user) : null,
+    profile: {
+      identity,
+      careerIntent,
+      aspirations,
+    },
+    resume: {
+      metadata: { ...resumeMetadata },
+      portfolioLinks: currentPortfolioLinks.map((link) => ({ ...link })),
+      highlights: resumeHighlights.map((highlight) => ({ ...highlight })),
+    },
+    skills: {
+      matrix: currentSkillMatrix.map((entry) => ({ ...entry })),
+    },
+    readiness: {
+      summary: { ...tradingReadiness },
+      trend: readinessTrend.map((entry) => ({ ...entry })),
+      interviewPacks: interviewPacks.map((pack) => ({ ...pack })),
+      recommendations: profileRecommendations.map((recommendation) => ({ ...recommendation })),
+    },
+    settings: {
+      notifications: { ...profileSettings.notifications },
+      personalization: { ...profileSettings.personalization },
+      privacy: { ...profileSettings.privacy },
+    },
+  }
+}
+
+function getClientExportOverrides(user: AuthUser | null): ProfileExportOverrides {
+  if (typeof window === "undefined") return {}
+
+  const defaultCareerIntent: CareerIntentData = user
+    ? {
+        targetRole: user.targetRole,
+        targetTimeline: user.targetTimeline,
+        targetFirms: [...user.targetFirms],
+        preferResearchHeavy: user.preferResearchHeavy,
+        preferLowLatency: user.preferLowLatency,
+        preferDiscretionary: user.preferDiscretionary,
+      }
+    : { ...careerIntentData, targetFirms: [...careerIntentData.targetFirms] }
+
+  const defaultAspirations: AspirationsData = user
     ? {
         ...aspirationsData,
         northStar: user.northStar || aspirationsData.northStar,
@@ -109,35 +194,37 @@ export function buildProfileExportPayload(user: AuthUser | null): ProfileExportP
       }
 
   return {
-    metadata: {
-      exportedAt: new Date().toISOString(),
-      formatVersion: 1,
-    },
-    account: user ? toPublicAuthUser(user) : null,
-    profile: {
-      identity,
-      careerIntent,
-      aspirations,
-    },
-    resume: {
-      metadata: { ...resumeMetadata },
-      portfolioLinks: portfolioLinks.map((link) => ({ ...link })),
-      highlights: resumeHighlights.map((highlight) => ({ ...highlight })),
-    },
-    skills: {
-      matrix: skillMatrix.map((entry) => ({ ...entry })),
-    },
-    readiness: {
-      summary: { ...tradingReadiness },
-      trend: readinessTrend.map((entry) => ({ ...entry })),
-      interviewPacks: interviewPacks.map((pack) => ({ ...pack })),
-      recommendations: profileRecommendations.map((recommendation) => ({ ...recommendation })),
-    },
-    settings: {
-      notifications: { ...profileSettings.notifications },
-      personalization: { ...profileSettings.personalization },
-      privacy: { ...profileSettings.privacy },
-    },
+    careerIntent: loadStoredCareerIntent(defaultCareerIntent),
+    aspirations: loadStoredAspirations(defaultAspirations),
+    portfolioLinks: loadStoredPortfolioLinks(portfolioLinks.map((link) => ({ ...link }))),
+  }
+}
+
+async function loadExportSkillMatrix(user: AuthUser | null): Promise<SkillEntry[]> {
+  if (typeof window === "undefined" || !user?.email) {
+    return buildSkillMatrix()
+  }
+
+  try {
+    const res = await fetch(`/api/learn/quiz-progress?email=${encodeURIComponent(user.email)}`, {
+      cache: "no-store",
+    })
+    if (!res.ok) return buildSkillMatrix()
+
+    const data = (await res.json()) as { progress?: StoredQuizProgress[] }
+    const byId: Record<string, StoredQuizProgress> = {}
+    if (Array.isArray(data.progress)) {
+      for (const progress of data.progress) {
+        if (progress?.quizId) byId[progress.quizId] = progress
+      }
+    }
+
+    return buildSkillMatrix({
+      quizProgressById: byId,
+      useQuizProgressOnly: true,
+    })
+  } catch {
+    return buildSkillMatrix()
   }
 }
 
@@ -491,7 +578,6 @@ function buildProfileExportPdf(payload: ProfileExportPayload): Uint8Array {
     { label: "Location", value: identity.location },
     { label: "Timezone", value: identity.timezone },
     { label: "Tracks", value: identity.tracks.join(", ") || "-" },
-    { label: "Target Role", value: intent.targetRole },
   ])
 
   addSectionHeader("Career Intent", "Role targeting constraints and environment preferences.")
@@ -509,13 +595,10 @@ function buildProfileExportPdf(payload: ProfileExportPayload): Uint8Array {
     },
   ])
 
-  addSectionHeader("Aspirations", "Motivation and cadence preferences that shape coaching plans.")
+  addSectionHeader("Aspirations", "Motivation and preferences that shape coaching plans.")
   addParagraphCard("North Star", aspirations.northStar)
   addParagraphCard("Why Quant", aspirations.whyQuant)
   addKeyValueGrid([
-    { label: "Learning Style", value: aspirations.learningStyle },
-    { label: "Hours / Week", value: `${aspirations.hoursPerWeek}` },
-    { label: "Available Days", value: aspirations.availableDays.join(", ") || "-" },
     { label: "Risk Tolerance", value: aspirations.riskTolerancePref },
   ])
   addListCard("Strengths", aspirations.strengths)
@@ -673,7 +756,7 @@ function buildProfileExportPdf(payload: ProfileExportPayload): Uint8Array {
   addListCard(
     "Portfolio Links",
     payload.resume.portfolioLinks.map((link) =>
-      `${link.label} (${link.category}) - ${link.url} [${link.visible ? "Visible" : "Hidden"}]`),
+      `${link.label} (${link.category}) - ${link.url}`),
   )
   addListCard(
     "Resume Highlights",
@@ -732,10 +815,15 @@ function buildProfileExportPdf(payload: ProfileExportPayload): Uint8Array {
   return textEncoder.encode(pdf)
 }
 
-export function downloadProfileExport(user: AuthUser | null): string | null {
+export async function downloadProfileExport(user: AuthUser | null): Promise<string | null> {
   if (typeof window === "undefined") return null
 
-  const payload = buildProfileExportPayload(user)
+  const clientOverrides = getClientExportOverrides(user)
+  const liveSkillMatrix = await loadExportSkillMatrix(user)
+  const payload = buildProfileExportPayload(user, {
+    ...clientOverrides,
+    skillsMatrix: liveSkillMatrix,
+  })
   const dateStamp = new Date().toISOString().slice(0, 10)
   const baseName = toFileSafeName(user?.name ?? profileIdentity.name) || "user"
   const fileName = `profile-export-${baseName}-${dateStamp}.pdf`
