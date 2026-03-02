@@ -7,6 +7,8 @@ import { DEMO_USER } from "@/lib/auth-demo"
 import type { AuthUser } from "@/lib/auth-types"
 import type { LearningStylePref, TargetRole, TargetTimeline, TrackBadge } from "@/lib/types"
 import type { InProgressQuizState, StoredQuizProgress } from "@/lib/quiz-progress"
+import { QUESTIONS_PER_POOL, getQuestionPoolForQuiz } from "@/lib/quiz-question-bank"
+import { skillMatrixQuizDefinitionsForDb } from "@/lib/skill-matrix-quiz-definitions"
 
 type DbUserRow = {
   name: string
@@ -92,6 +94,27 @@ function getDb(): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (quiz_id, user_email)
     );
+    CREATE TABLE IF NOT EXISTS quiz_catalog (
+      quiz_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      topic_tags TEXT NOT NULL,
+      difficulty TEXT NOT NULL,
+      time_limit_minutes INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS quiz_questions (
+      quiz_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      question_type TEXT NOT NULL,
+      text TEXT NOT NULL,
+      options TEXT,
+      correct_answer TEXT NOT NULL,
+      explanation TEXT NOT NULL,
+      topic_tags TEXT NOT NULL,
+      difficulty TEXT NOT NULL,
+      PRIMARY KEY (quiz_id, question_id)
+    );
     CREATE TABLE IF NOT EXISTS resume_analyses (
       user_email TEXT PRIMARY KEY,
       analysis_json TEXT NOT NULL,
@@ -110,8 +133,94 @@ function getDb(): DatabaseSync {
   }
 
   seedDemoUser()
+  seedQuizCatalogAndQuestions()
 
   return db
+}
+
+function seedQuizCatalogAndQuestions(): void {
+  const sqlite = db
+  if (!sqlite) return
+
+  const nowIso = new Date().toISOString()
+  const upsertQuiz = sqlite.prepare(`
+    INSERT OR REPLACE INTO quiz_catalog (
+      quiz_id,
+      title,
+      topic_tags,
+      difficulty,
+      time_limit_minutes,
+      updated_at
+    ) VALUES (
+      @quiz_id,
+      @title,
+      @topic_tags,
+      @difficulty,
+      @time_limit_minutes,
+      @updated_at
+    )
+  `)
+  const clearQuestions = sqlite.prepare("DELETE FROM quiz_questions WHERE quiz_id = ?")
+  const upsertQuestion = sqlite.prepare(`
+    INSERT OR REPLACE INTO quiz_questions (
+      quiz_id,
+      question_id,
+      position,
+      question_type,
+      text,
+      options,
+      correct_answer,
+      explanation,
+      topic_tags,
+      difficulty
+    ) VALUES (
+      @quiz_id,
+      @question_id,
+      @position,
+      @question_type,
+      @text,
+      @options,
+      @correct_answer,
+      @explanation,
+      @topic_tags,
+      @difficulty
+    )
+  `)
+
+  sqlite.exec("BEGIN")
+  try {
+    for (const quizDefinition of skillMatrixQuizDefinitionsForDb) {
+      upsertQuiz.run({
+        quiz_id: quizDefinition.quizId,
+        title: quizDefinition.quizTitle,
+        topic_tags: JSON.stringify(quizDefinition.topicTags),
+        difficulty: quizDefinition.difficulty,
+        time_limit_minutes: quizDefinition.timeLimitMinutes,
+        updated_at: nowIso,
+      })
+
+      clearQuestions.run(quizDefinition.quizId)
+      const questions = getQuestionPoolForQuiz(quizDefinition.quizId).slice(0, QUESTIONS_PER_POOL)
+      questions.forEach((question, index) => {
+        upsertQuestion.run({
+          quiz_id: quizDefinition.quizId,
+          question_id: question.id,
+          position: index,
+          question_type: question.type,
+          text: question.text,
+          options: question.options ? JSON.stringify(question.options) : null,
+          correct_answer: question.correctAnswer,
+          explanation: question.explanation,
+          topic_tags: JSON.stringify(question.topicTags),
+          difficulty: question.difficulty,
+        })
+      })
+    }
+    sqlite.exec("COMMIT")
+  } catch (error) {
+    sqlite.exec("ROLLBACK")
+    throw error
+  }
 }
 
 function parseJsonArray<T>(value: string): T[] {
@@ -353,6 +462,13 @@ export function deleteConversationById(id: string, email: string): void {
   sqlite
     .prepare("DELETE FROM conversations WHERE id = ? AND user_email = ?")
     .run(id, email.toLowerCase())
+}
+
+export function deleteConversationsByEmail(email: string): void {
+  const sqlite = getDb()
+  sqlite
+    .prepare("DELETE FROM conversations WHERE user_email = ?")
+    .run(email.toLowerCase())
 }
 
 export function getQuizProgress(email: string): StoredQuizProgress[] {

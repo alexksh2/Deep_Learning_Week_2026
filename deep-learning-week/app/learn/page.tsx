@@ -520,9 +520,13 @@ function LearnContent() {
                   <SelectItem value="probability">Probability</SelectItem>
                   <SelectItem value="statistics">Statistics</SelectItem>
                   <SelectItem value="time-series">Time Series</SelectItem>
+                  <SelectItem value="optimization">Optimization</SelectItem>
                   <SelectItem value="execution">Execution</SelectItem>
                   <SelectItem value="microstructure">Microstructure</SelectItem>
                   <SelectItem value="risk">Risk</SelectItem>
+                  <SelectItem value="python">Python</SelectItem>
+                  <SelectItem value="cpp">C++</SelectItem>
+                  <SelectItem value="debugging">Debugging</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={quizDifficulty} onValueChange={setQuizDifficulty}>

@@ -7,7 +7,6 @@ import { CareerIntentCard } from "@/components/profile/CareerIntentCard"
 import { ResumePortfolioTab } from "@/components/profile/ResumePortfolioTab"
 import { AspirationsTab } from "@/components/profile/AspirationsTab"
 import { SkillsMatrixTab } from "@/components/profile/SkillsMatrixTab"
-import { ReadinessTab } from "@/components/profile/ReadinessTab"
 
 export default function ProfilePage() {
   return (
@@ -28,7 +27,6 @@ export default function ProfilePage() {
               { value: "resume",      label: "Resume & Portfolio" },
               { value: "aspirations", label: "Aspirations" },
               { value: "skills",      label: "Skills Matrix" },
-              { value: "readiness",   label: "Readiness" },
             ].map(tab => (
               <TabsTrigger
                 key={tab.value}
@@ -48,9 +46,6 @@ export default function ProfilePage() {
           </TabsContent>
           <TabsContent value="skills">
             <SkillsMatrixTab />
-          </TabsContent>
-          <TabsContent value="readiness">
-            <ReadinessTab />
           </TabsContent>
         </Tabs>
       </div>

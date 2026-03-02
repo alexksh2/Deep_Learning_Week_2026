@@ -15,7 +15,7 @@ import { cn }           from "@/lib/utils"
 import { useAuth }      from "@/contexts/AuthContext"
 import {
   Plus, Send, Trash2, MessageSquare, ChevronLeft, ChevronRight,
-  WifiOff, Copy, Check, FileText, X, ChevronDown, ChevronUp, Paperclip,
+  WifiOff, Copy, Check, FileText, X, ChevronDown, ChevronUp, Paperclip, GripVertical,
 } from "lucide-react"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -34,11 +34,17 @@ interface Evaluation {
   reasoning:   string
 }
 
+interface SubmittedDocument {
+  id: string
+  name: string
+}
+
 interface Message {
   id:         string
   role:       "user" | "assistant"
   content:    string
   createdAt:  string
+  documents?: SubmittedDocument[]
   citations?: Citation[]
   evaluation?: Evaluation
 }
@@ -84,6 +90,10 @@ const MODELS = [
 const DEFAULT_MODEL = "gpt-4o-mini"
 const DEFAULT_MODEL_LABEL = MODELS.find(m => m.id === DEFAULT_MODEL)?.label ?? DEFAULT_MODEL
 const MODEL_IDS = new Set(MODELS.map(m => m.id))
+const SIDEBAR_MIN_WIDTH = 240
+const SIDEBAR_MAX_WIDTH = 420
+const SIDEBAR_DEFAULT_WIDTH = 280
+const SIDEBAR_WIDTH_STORAGE_KEY = "coaching-sidebar-width"
 
 function normalizeModel(value: unknown): string {
   return typeof value === "string" && MODEL_IDS.has(value) ? value : DEFAULT_MODEL
@@ -93,6 +103,10 @@ const ASSESSMENT_COLOR: Record<string, string> = {
   well_supported:      "text-emerald-500",
   partially_supported: "text-amber-500",
   unsupported:         "text-destructive",
+}
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -218,6 +232,20 @@ function MessageBubble({
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
           )}
+
+          {isUser && message.documents && message.documents.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {message.documents.map((doc) => (
+                <span
+                  key={doc.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-0.5 text-[10px] text-primary-foreground/90"
+                >
+                  <FileText className="h-3 w-3 shrink-0" />
+                  <span className="max-w-40 truncate">{doc.name}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Citations + evaluation (document-assisted responses) */}
@@ -240,6 +268,8 @@ export default function CoachingPage() {
   const [input,         setInput]         = useState("")
   const [isStreaming,   setIsStreaming]    = useState(false)
   const [sidebarOpen,   setSidebarOpen]   = useState(true)
+  const [sidebarWidth,  setSidebarWidth]  = useState(SIDEBAR_DEFAULT_WIDTH)
+  const [sidebarWidthReady, setSidebarWidthReady] = useState(false)
   const [apiError,      setApiError]      = useState("")
   const [queuedSend,    setQueuedSend]    = useState<QueuedSend | null>(null)
   const [failedConfirmation, setFailedConfirmation] = useState<FailedSendConfirmation | null>(null)
@@ -257,6 +287,24 @@ export default function CoachingPage() {
   const queuedForActiveConversation = queuedSend && activeId === queuedSend.conversationId ? queuedSend : null
   const failedConfirmationForActiveConversation =
     failedConfirmation && activeId === failedConfirmation.conversationId ? failedConfirmation : null
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const saved = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (saved) {
+      const parsed = Number(saved)
+      if (Number.isFinite(parsed)) {
+        setSidebarWidth(clampSidebarWidth(parsed))
+      }
+    }
+    setSidebarWidthReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!sidebarWidthReady) return
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
+  }, [sidebarWidth, sidebarWidthReady])
 
   // Load conversations from DB on mount
   useEffect(() => {
@@ -366,6 +414,12 @@ export default function CoachingPage() {
   }
 
   function deleteConversation(id: string) {
+    const target = conversations.find(c => c.id === id)
+    const targetTitle = target?.title?.trim() || "this conversation"
+    if (typeof window !== "undefined" && !window.confirm(`Delete "${targetTitle}"? This cannot be undone.`)) {
+      return
+    }
+
     setConversations(prev => {
       const next = prev.filter(c => c.id !== id)
       if (activeId === id) setActiveId(next[0]?.id ?? null)
@@ -378,6 +432,37 @@ export default function CoachingPage() {
         method: "DELETE",
       }).catch(() => { /* ignore */ })
     }
+  }
+
+  function deleteActiveConversation() {
+    if (!activeId) return
+    deleteConversation(activeId)
+  }
+
+  function startSidebarResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (!sidebarOpen) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+
+    const handleMove = (event: PointerEvent) => {
+      const delta = event.clientX - startX
+      setSidebarWidth(clampSidebarWidth(startWidth + delta))
+    }
+
+    const clearResize = () => {
+      document.body.style.removeProperty("cursor")
+      document.body.style.removeProperty("user-select")
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", clearResize)
+      window.removeEventListener("pointercancel", clearResize)
+    }
+
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+    window.addEventListener("pointermove", handleMove)
+    window.addEventListener("pointerup", clearResize)
+    window.addEventListener("pointercancel", clearResize)
   }
 
   const updateConversation = useCallback((id: string, updater: (c: Conversation) => Conversation) => {
@@ -590,15 +675,24 @@ export default function CoachingPage() {
     convId: string,
     docsForQuery: AttachedDocument[] | null,
   ) {
-    const userMsg: Message = { id: uid(), role: "user",      content: text, createdAt: new Date().toISOString() }
+    const submittedDocuments = docsForQuery?.map((doc) => ({ id: doc.id, name: doc.name }))
+    const userMsg: Message = {
+      id: uid(),
+      role: "user",
+      content: text,
+      createdAt: new Date().toISOString(),
+      documents: submittedDocuments && submittedDocuments.length > 0 ? submittedDocuments : undefined,
+    }
     const asstMsg: Message = { id: uid(), role: "assistant", content: "",   createdAt: new Date().toISOString() }
 
     updateConversation(convId, c => ({
       ...c,
       model: normalizedModel,
+      documents: [],
       title:    c.messages.length === 0 ? deriveTitle(text) : c.title,
       messages: [...c.messages, userMsg, asstMsg],
     }))
+    if (fileInputRef.current) fileInputRef.current.value = ""
     setApiError("")
     setIsStreaming(true)
 
@@ -737,15 +831,30 @@ export default function CoachingPage() {
       <div className="flex h-[calc(100vh-3.5rem-3rem)] -my-6 overflow-hidden rounded-xl border border-border bg-card">
 
         {/* ── Sidebar ── */}
-        <aside className={cn(
-          "flex flex-col border-r border-border bg-muted/30 transition-all duration-200",
-          sidebarOpen ? "w-64" : "w-0 overflow-hidden",
-        )}>
-          <div className="flex h-12 items-center justify-between border-b border-border px-3">
+        <aside
+          className={cn(
+            "flex shrink-0 flex-col bg-muted/30 transition-[width] duration-200",
+            sidebarOpen ? "overflow-hidden border-r border-border" : "w-0 overflow-hidden border-r-0",
+          )}
+          style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+        >
+          <div className="flex h-12 items-center justify-between gap-1 border-b border-border px-3">
             <span className="text-sm font-semibold">Conversations</span>
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={newConversation}>
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={newConversation} title="New conversation">
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={deleteActiveConversation}
+                disabled={!activeId}
+                title="Delete selected conversation"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
 
           <ScrollArea className="flex-1">
@@ -779,7 +888,12 @@ export default function CoachingPage() {
                     </div>
                     <button
                       onClick={e => { e.stopPropagation(); deleteConversation(conv.id) }}
-                      className="mt-0.5 hidden shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:block"
+                      className={cn(
+                        "mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-opacity hover:text-destructive",
+                        activeId === conv.id ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                      )}
+                      aria-label={`Delete ${conv.title}`}
+                      title="Delete conversation"
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -789,6 +903,20 @@ export default function CoachingPage() {
             </div>
           </ScrollArea>
         </aside>
+
+        {sidebarOpen && (
+          <div
+            role="separator"
+            aria-label="Resize conversation sidebar"
+            aria-orientation="vertical"
+            onPointerDown={startSidebarResize}
+            className="group relative w-1 shrink-0 cursor-col-resize bg-border/70 transition-colors hover:bg-primary/35 active:bg-primary/45"
+          >
+            <div className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center">
+              <GripVertical className="h-3 w-3 text-muted-foreground/70 group-hover:text-foreground/80" />
+            </div>
+          </div>
+        )}
 
         {/* ── Main chat area ── */}
         <div className="flex flex-1 flex-col overflow-hidden">

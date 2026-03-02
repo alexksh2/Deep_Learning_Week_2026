@@ -299,7 +299,330 @@ CAREER_PROFILES = {
 
 
 # ----------------------------
-# 3) FAISS Vector Store
+# 3) Shared helpers
+# ----------------------------
+
+NON_QUANT_CATEGORIES = {"Soft Skills"}
+
+QUANT_KEY_TERMS = {
+    "quant",
+    "python",
+    "c++",
+    "sql",
+    "stochastic",
+    "statistics",
+    "linear algebra",
+    "derivatives",
+    "options",
+    "volatility",
+    "risk",
+    "factor",
+    "portfolio",
+    "backtesting",
+    "algorithmic trading",
+    "microstructure",
+    "signal",
+    "time series",
+    "fixed income",
+    "credit",
+    "market data",
+    "machine learning",
+    "reinforcement learning",
+    "quantlib",
+    "bloomberg",
+    "alpha",
+    "beta",
+    "sharpe",
+    "var",
+    "garch",
+}
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_quant_category(category: Optional[str]) -> bool:
+    if not category:
+        return True
+    return category not in NON_QUANT_CATEGORIES
+
+
+def _is_quant_related_text(value: str) -> bool:
+    lower = value.lower()
+    if "quant" in lower:
+        return True
+    return any(term in lower for term in QUANT_KEY_TERMS)
+
+
+def _trim_text(value: str, max_chars: int = 180) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return cleaned[: max_chars - 3].rstrip() + "..."
+
+
+def _dedupe_strings(values: List[str]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = value.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(value.strip())
+    return out
+
+
+def build_skill_evidence_map(extraction: Dict[str, Any], max_per_skill: int = 3) -> Dict[str, List[str]]:
+    evidence_by_skill: Dict[str, List[str]] = {}
+    skills = extraction.get("skills", [])
+    if not isinstance(skills, list):
+        return evidence_by_skill
+
+    for item in skills:
+        if not isinstance(item, dict):
+            continue
+        skill = item.get("skill")
+        if not isinstance(skill, str) or not skill.strip():
+            continue
+        key = skill.strip().lower()
+        snippets = item.get("evidence", [])
+        if not isinstance(snippets, list):
+            continue
+        bucket = evidence_by_skill.setdefault(key, [])
+        for snippet in snippets:
+            if not isinstance(snippet, str):
+                continue
+            cleaned = re.sub(r"\s+", " ", snippet).strip()
+            if len(cleaned) < 10:
+                continue
+            if cleaned not in bucket:
+                bucket.append(cleaned)
+            if len(bucket) >= max_per_skill:
+                break
+
+    return evidence_by_skill
+
+
+def _build_score_explanation(
+    missing_required: List[str],
+    missing_preferred: List[str],
+) -> str:
+    if missing_required:
+        return (
+            "Primary constraint: missing required skills "
+            f"({', '.join(missing_required)}). Required skills have the highest weight."
+        )
+    if missing_preferred:
+        return (
+            "All required skills are covered; score is limited by missing preferred skills "
+            f"({', '.join(missing_preferred)})."
+        )
+    return "All required and preferred skills are covered."
+
+
+def _build_action_text(skill: str) -> str:
+    lower = skill.lower()
+    if any(term in lower for term in ["backtesting", "signal", "algorithmic trading", "microstructure"]):
+        return (
+            f"Add a project bullet showing {skill} with dataset, strategy logic, and out-of-sample metrics "
+            "(e.g., Sharpe, max drawdown, win rate)."
+        )
+    if any(term in lower for term in ["derivatives", "options", "stochastic", "volatility", "interest rate"]):
+        return (
+            f"Add a pricing/risk case study for {skill} with model choice, assumptions, and numerical validation."
+        )
+    if any(term in lower for term in ["risk", "factor", "portfolio", "statistics", "time series"]):
+        return (
+            f"Show {skill} in a quantified workflow (problem, method, result) and include at least one measurable outcome."
+        )
+    if any(term in lower for term in ["python", "c++", "sql", "machine learning", "quantlib"]):
+        return (
+            f"Include a concrete implementation example for {skill} (stack used, scale, and impact)."
+        )
+    return f"Add a quantified bullet or project proving {skill} with concrete evidence and outcomes."
+
+
+POSITIONING_SIGNAL_SKILLS: Dict[str, Tuple[str, ...]] = {
+    "algorithmic trading": ("backtesting", "signal research", "market microstructure"),
+    "backtesting": ("algorithmic trading", "signal research", "market microstructure"),
+    "signal research": ("algorithmic trading", "backtesting", "market microstructure"),
+    "market microstructure": ("algorithmic trading", "backtesting", "signal research"),
+}
+
+POSITIONING_SIGNAL_KEYWORDS: Dict[str, Tuple[str, ...]] = {
+    "algorithmic trading": (
+        "trading strategy",
+        "systematic",
+        "signal",
+        "backtest",
+        "out-of-sample",
+        "sharpe",
+        "drawdown",
+        "win rate",
+        "alpha",
+    ),
+}
+
+
+def _build_positioning_action_text(skill: str) -> str:
+    if skill.lower() == "algorithmic trading":
+        return (
+            "Reframe one existing trading bullet to explicitly name Algorithmic Trading, then show "
+            "dataset, strategy logic, and out-of-sample metrics (Sharpe, max drawdown, win rate)."
+        )
+    return (
+        f"Rephrase one existing bullet so {skill} appears explicitly as a named skill, and attach a measurable outcome."
+    )
+
+
+def _collect_positioning_evidence(
+    target_skill: str,
+    matched_skills: List[str],
+    evidence_by_skill: Dict[str, List[str]],
+    max_items: int = 2,
+) -> Tuple[List[str], List[str]]:
+    target_key = target_skill.lower()
+    signal_skills = POSITIONING_SIGNAL_SKILLS.get(target_key, tuple())
+    signal_keywords = POSITIONING_SIGNAL_KEYWORDS.get(target_key, tuple())
+
+    lines: List[str] = []
+    supporting_skills: List[str] = []
+    seen_lines: set[str] = set()
+    matched_by_key: Dict[str, str] = {skill.lower(): skill for skill in matched_skills}
+
+    for skill_key in signal_skills:
+        display_skill = matched_by_key.get(skill_key)
+        if not display_skill:
+            continue
+        snippets = evidence_by_skill.get(skill_key, [])
+        if not snippets:
+            continue
+        line = f"{display_skill}: {_trim_text(snippets[0], max_chars=120)}"
+        line_key = line.lower()
+        if line_key in seen_lines:
+            continue
+        seen_lines.add(line_key)
+        lines.append(line)
+        supporting_skills.append(display_skill)
+        if len(lines) >= max_items:
+            return lines, _dedupe_strings(supporting_skills)
+
+    if not signal_keywords:
+        return lines, _dedupe_strings(supporting_skills)
+
+    for skill in matched_skills:
+        skill_key = skill.lower()
+        snippets = evidence_by_skill.get(skill_key, [])
+        if not snippets:
+            continue
+        for snippet in snippets:
+            lowered = snippet.lower()
+            if not any(keyword in lowered for keyword in signal_keywords):
+                continue
+            line = f"{skill}: {_trim_text(snippet, max_chars=120)}"
+            line_key = line.lower()
+            if line_key in seen_lines:
+                continue
+            seen_lines.add(line_key)
+            lines.append(line)
+            supporting_skills.append(skill)
+            break
+        if len(lines) >= max_items:
+            break
+
+    return lines, _dedupe_strings(supporting_skills)
+
+
+def build_improvement_recommendations(
+    career_matches: List[Dict[str, Any]],
+    evidence_by_skill: Dict[str, List[str]],
+    max_items: int = 6,
+) -> List[Dict[str, Any]]:
+    recommendations: List[Dict[str, Any]] = []
+    seen_pairs: set[Tuple[str, str]] = set()
+
+    for match in career_matches[:4]:
+        title = str(match.get("title", "")).strip()
+        if not title:
+            continue
+
+        missing_required = [
+            s for s in match.get("missing_required", [])
+            if isinstance(s, str) and s.strip()
+        ]
+        missing_preferred = [
+            s for s in match.get("missing_preferred", [])
+            if isinstance(s, str) and s.strip()
+        ]
+        if not missing_required and not missing_preferred:
+            continue
+
+        targets = missing_required if missing_required else missing_preferred
+        reason_tag = "required" if missing_required else "preferred"
+        matched_required = [s for s in match.get("matched_required", []) if isinstance(s, str)]
+        matched_preferred = [s for s in match.get("matched_preferred", []) if isinstance(s, str)]
+        matched_skills = _dedupe_strings(matched_required + matched_preferred)
+
+        evidence_lines: List[str] = []
+        for skill in matched_skills:
+            snippets = evidence_by_skill.get(skill.lower(), [])
+            if not snippets:
+                continue
+            evidence_lines.append(f"{skill}: {_trim_text(snippets[0], max_chars=120)}")
+            if len(evidence_lines) >= 2:
+                break
+
+        for skill in targets[:2]:
+            pair = (title.lower(), skill.lower())
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+
+            positioning_evidence, supporting_skills = _collect_positioning_evidence(
+                target_skill=skill,
+                matched_skills=matched_skills,
+                evidence_by_skill=evidence_by_skill,
+                max_items=2,
+            )
+            is_positioning_gap = len(positioning_evidence) > 0 and len(supporting_skills) > 0
+            if is_positioning_gap:
+                why = (
+                    f"{skill} is not yet explicit for {title}. You already show related evidence "
+                    f"({', '.join(supporting_skills)}), so this is mainly a resume-positioning gap."
+                )
+                action = _build_positioning_action_text(skill)
+                gap_type = "positioning"
+                recommendation_evidence = positioning_evidence
+            else:
+                why = (
+                    f"{skill} is currently missing for {title} ({reason_tag} skill), which directly reduces this career score."
+                )
+                action = _build_action_text(skill)
+                gap_type = reason_tag
+                recommendation_evidence = evidence_lines
+
+            recommendations.append({
+                "career": title,
+                "target_skill": skill,
+                "priority": "High" if reason_tag == "required" else "Medium",
+                "gap_type": gap_type,
+                "why": why,
+                "action": action,
+                "resume_evidence": recommendation_evidence,
+            })
+            if len(recommendations) >= max_items:
+                return recommendations
+
+    return recommendations
+
+
+# ----------------------------
+# 4) FAISS Vector Store
 # ----------------------------
 
 class SentenceTransformerEmbedder:
@@ -354,7 +677,7 @@ class SkillVectorStore:
 
 
 # ----------------------------
-# 4) OpenAI LLM
+# 5) OpenAI LLM
 # ----------------------------
 
 class OpenAILLM:
@@ -376,7 +699,7 @@ class OpenAILLM:
 
 
 # ----------------------------
-# 5) Full resume parsing
+# 6) Full resume parsing
 # ----------------------------
 
 _PARSE_SYSTEM = (
@@ -435,7 +758,7 @@ def parse_full_resume(text: str, llm: OpenAILLM) -> Dict[str, Any]:
 
 
 # ----------------------------
-# 6) Skill extraction (RAG)
+# 7) Skill extraction (RAG)
 # ----------------------------
 
 _SKILL_SYSTEM = (
@@ -499,24 +822,59 @@ def extract_skills_with_retries(llm: OpenAILLM, user_prompt: str, max_retries: i
 
 
 # ----------------------------
-# 7) Career Matching
+# 8) Career Matching
 # ----------------------------
 
-def calculate_career_matches(skill_names: List[str]) -> List[Dict[str, Any]]:
+def calculate_career_matches(
+    skill_names: List[str],
+    evidence_by_skill: Optional[Dict[str, List[str]]] = None,
+) -> List[Dict[str, Any]]:
     skill_set = {s.lower() for s in skill_names}
+    evidence = evidence_by_skill or {}
     matches = []
     for career, profile in CAREER_PROFILES.items():
         required = profile["required"]
         preferred = profile["preferred"]
-        matched_req = [s for s in required if s.lower() in skill_set]
-        matched_pref = [s for s in preferred if s.lower() in skill_set]
+        matched_req = _dedupe_strings([s for s in required if s.lower() in skill_set])
+        matched_pref = _dedupe_strings([s for s in preferred if s.lower() in skill_set])
+        missing_required = _dedupe_strings([s for s in required if s.lower() not in skill_set])
+        missing_preferred = _dedupe_strings([s for s in preferred if s.lower() not in skill_set])
         req_score = len(matched_req) / len(required) * 60 if required else 0
         pref_score = len(matched_pref) / len(preferred) * 40 if preferred else 0
+        match_evidence: List[Dict[str, str]] = []
+        seen_evidence_snippets: set[str] = set()
+        for skill in matched_req + matched_pref:
+            snippets = evidence.get(skill.lower(), [])
+            if snippets:
+                snippet = _trim_text(snippets[0], max_chars=140)
+                snippet_key = snippet.lower()
+                if snippet_key in seen_evidence_snippets:
+                    continue
+                seen_evidence_snippets.add(snippet_key)
+                match_evidence.append({
+                    "skill": skill,
+                    "snippet": snippet,
+                })
+            if len(match_evidence) >= 4:
+                break
         matches.append({
             "title": career,
             "match_percentage": int(req_score + pref_score),
             "matched_skills": matched_req + matched_pref,
-            "missing_skills": [s for s in required if s.lower() not in skill_set],
+            "matched_required": matched_req,
+            "matched_preferred": matched_pref,
+            "missing_skills": missing_required,
+            "missing_required": missing_required,
+            "missing_preferred": missing_preferred,
+            "required_score": round(req_score, 1),
+            "preferred_score": round(pref_score, 1),
+            "required_coverage": f"{len(matched_req)}/{len(required)}",
+            "preferred_coverage": f"{len(matched_pref)}/{len(preferred)}",
+            "score_explanation": _build_score_explanation(
+                missing_required=missing_required,
+                missing_preferred=missing_preferred,
+            ),
+            "resume_evidence": match_evidence,
             "category": profile["category"],
         })
     matches.sort(key=lambda x: x["match_percentage"], reverse=True)
@@ -524,7 +882,105 @@ def calculate_career_matches(skill_names: List[str]) -> List[Dict[str, Any]]:
 
 
 # ----------------------------
-# 8) Text extraction
+# 9) Highlight extraction
+# ----------------------------
+
+def _normalize_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _add_highlight(
+    out: List[str],
+    seen: set[str],
+    candidate: str,
+    max_items: int,
+    require_quant: bool = False,
+) -> None:
+    if len(out) >= max_items:
+        return
+    cleaned = _normalize_whitespace(candidate)
+    if len(cleaned) < 12:
+        return
+    if require_quant and not _is_quant_related_text(cleaned):
+        return
+    key = cleaned.lower()
+    if key in seen:
+        return
+    seen.add(key)
+    out.append(cleaned)
+
+
+def build_extracted_highlights(
+    resume_data: Dict[str, Any],
+    extraction: Dict[str, Any],
+    max_items: int = 3,
+) -> List[str]:
+    highlights: List[str] = []
+    seen: set[str] = set()
+
+    skills = extraction.get("skills", [])
+    if isinstance(skills, list):
+        for item in skills:
+            if not isinstance(item, dict):
+                continue
+            skill_name = item.get("skill")
+            category = item.get("category")
+            if isinstance(category, str) and not _is_quant_category(category):
+                continue
+            evidence = item.get("evidence", [])
+            if not isinstance(evidence, list):
+                continue
+            for snippet in evidence:
+                if not isinstance(snippet, str):
+                    continue
+                if isinstance(skill_name, str) and skill_name.strip():
+                    _add_highlight(
+                        highlights,
+                        seen,
+                        f"{skill_name.strip()}: {snippet}",
+                        max_items,
+                        require_quant=True,
+                    )
+                else:
+                    _add_highlight(highlights, seen, snippet, max_items, require_quant=True)
+                if len(highlights) >= max_items:
+                    return highlights
+
+    experience = resume_data.get("experience", [])
+    if isinstance(experience, list):
+        for role in experience:
+            if not isinstance(role, dict):
+                continue
+            bullets = role.get("bullets", [])
+            if not isinstance(bullets, list):
+                continue
+            for bullet in bullets:
+                if not isinstance(bullet, str):
+                    continue
+                _add_highlight(highlights, seen, bullet, max_items, require_quant=True)
+                if len(highlights) >= max_items:
+                    return highlights
+
+    projects = resume_data.get("projects", [])
+    if isinstance(projects, list):
+        for project in projects:
+            if not isinstance(project, dict):
+                continue
+            description = project.get("description")
+            if isinstance(description, str):
+                _add_highlight(highlights, seen, description, max_items, require_quant=True)
+            if len(highlights) >= max_items:
+                return highlights
+
+    summary = resume_data.get("summary")
+    if isinstance(summary, str):
+        _add_highlight(highlights, seen, summary, max_items, require_quant=True)
+
+    return highlights
+
+
+# ----------------------------
+# 10) Text extraction
 # ----------------------------
 
 def extract_text_from_pdf(content: bytes) -> str:
@@ -543,7 +999,7 @@ def extract_text_from_docx(content: bytes) -> str:
 
 
 # ----------------------------
-# 9) CLI entry point
+# 11) CLI entry point
 # ----------------------------
 
 def main() -> None:
@@ -588,10 +1044,19 @@ def main() -> None:
     retrieved = vector_store.query(text, top_k=30)
     skill_prompt = _build_skill_prompt(text, retrieved)
     extraction = extract_skills_with_retries(llm, skill_prompt)
-    skill_names = [s["skill"] for s in extraction.get("skills", []) if "skill" in s]
+    skill_names = [s["skill"] for s in extraction.get("skills", []) if isinstance(s, dict) and "skill" in s]
+    evidence_by_skill = build_skill_evidence_map(extraction)
+
+    # Extracted highlights for UI display
+    resume_data["highlights"] = build_extracted_highlights(resume_data, extraction, max_items=3)
 
     # Career matching
-    resume_data["career_matches"] = calculate_career_matches(skill_names)[:8]
+    career_matches = calculate_career_matches(skill_names, evidence_by_skill)[:8]
+    resume_data["career_matches"] = career_matches
+    resume_data["improvement_recommendations"] = build_improvement_recommendations(
+        career_matches=career_matches,
+        evidence_by_skill=evidence_by_skill,
+    )
 
     # Single JSON blob to stdout — Next.js route reads this
     print(json.dumps(resume_data))

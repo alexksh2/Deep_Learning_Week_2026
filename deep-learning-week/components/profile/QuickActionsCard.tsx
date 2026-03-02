@@ -25,7 +25,7 @@ export function QuickActionsCard() {
   }
 
   const dialogContent: Record<string, { title: string; body: string }> = {
-    readiness: { title: "Readiness Check Complete", body: "Your current Readiness Index is 58/100. Largest gap: Execution Discipline (47). See the Readiness tab for the full breakdown and recommended drills." },
+    readiness: { title: "Readiness Check Complete", body: "Your current Readiness Index is 58/100. Largest gap: Execution Discipline (47). Open Profile > Readiness for the full breakdown and recommended drills." },
     study:     { title: "Study Plan Generated", body: "5-day plan generated based on your target role (Quant Trading) and current skill gaps. Check your daily plan on the Overview tab." },
     trade:     { title: "Drill Scheduled", body: "Paper Trading Drill: Stop-loss discipline (5 scenarios) scheduled for tomorrow at 09:30. You'll receive a reminder notification." },
   }

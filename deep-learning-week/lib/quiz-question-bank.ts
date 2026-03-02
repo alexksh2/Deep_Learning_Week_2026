@@ -1,8 +1,8 @@
-import type { QuizQuestion } from "./types"
+import type { Difficulty, QuizQuestion, TopicId } from "./types"
+import type { SkillMatrixQuizDefinition } from "./skill-matrix-quiz-definitions"
+import { skillMatrixQuizDefinitions } from "./skill-matrix-quiz-definitions"
 
-type QuizId = "q-cond-prob" | "q-garch" | "q-execution" | "q-risk-measures"
-
-const QUESTIONS_PER_POOL = 20
+export const QUESTIONS_PER_POOL = 20
 export const QUESTIONS_PER_ATTEMPT = 5
 
 function createMcq(question: Omit<QuizQuestion, "type">): QuizQuestion {
@@ -21,6 +21,95 @@ function shuffle<T>(items: T[]): T[] {
     copy[j] = temp
   }
   return copy
+}
+
+function rotateOptions(options: string[], offset: number): string[] {
+  const normalized = ((offset % options.length) + options.length) % options.length
+  if (normalized === 0) return options
+  return [...options.slice(normalized), ...options.slice(0, normalized)]
+}
+
+function topicLabel(topicId: TopicId): string {
+  switch (topicId) {
+    case "time-series":
+      return "time series"
+    case "cpp":
+      return "C++ systems"
+    default:
+      return topicId.replace("-", " ")
+  }
+}
+
+const GENERATED_QUESTION_STEMS = [
+  "Which statement best defines",
+  "What is the primary objective of",
+  "Which assumption is most critical when applying",
+  "Which validation check is most appropriate for",
+  "Which signal most strongly indicates weak understanding of",
+  "In practice, what is a common failure mode for",
+  "Which metric is most useful to monitor improvement in",
+  "If performance degrades, what is the best first diagnostic step for",
+  "Which tradeoff is most relevant when implementing",
+  "Which dataset property matters most for robust",
+  "Which outcome would justify retraining in",
+  "Which behavior most likely introduces bias into",
+  "What is the best way to reduce overfitting in",
+  "When results are unstable, what should be reviewed first in",
+  "Which statement about risk controls and",
+  "Which interpretation is most defensible for an incorrect answer in",
+  "Which change is most likely to improve consistency in",
+  "Which evidence is strongest for mastery in",
+  "What is a practical interview-ready explanation of",
+  "Which action best closes a gap identified in",
+] as const
+
+const GENERATED_DIFFICULTIES: Difficulty[] = [
+  "Beginner",
+  "Beginner",
+  "Intermediate",
+  "Intermediate",
+  "Intermediate",
+  "Intermediate",
+  "Intermediate",
+  "Advanced",
+  "Advanced",
+  "Beginner",
+  "Intermediate",
+  "Intermediate",
+  "Advanced",
+  "Advanced",
+  "Intermediate",
+  "Beginner",
+  "Intermediate",
+  "Beginner",
+  "Intermediate",
+  "Advanced",
+]
+
+function buildGeneratedQuestionPool(definition: SkillMatrixQuizDefinition): QuizQuestion[] {
+  const primaryTopic = topicLabel(definition.topicTags[0] ?? "probability")
+
+  return GENERATED_QUESTION_STEMS.map((stem, index) => {
+    const questionNumber = String(index + 1).padStart(2, "0")
+    const id = `${definition.quizId}-q${questionNumber}`
+    const questionText = `${stem} ${definition.skillName}?`
+
+    const correct = `${definition.skillName} requires explicit assumptions, measurable validation, and risk-aware decisions in ${primaryTopic}.`
+    const distractor1 = `${definition.skillName} should be judged only by intuition without reviewing mistakes.`
+    const distractor2 = `${definition.skillName} is fully solved once one backtest or one quiz attempt looks good.`
+    const distractor3 = `${definition.skillName} does not depend on context, data quality, or execution discipline.`
+    const options = rotateOptions([correct, distractor1, distractor2, distractor3], index)
+
+    return createMcq({
+      id,
+      text: questionText,
+      options,
+      correctAnswer: correct,
+      explanation: `Strong ${definition.skillName} performance should combine sound assumptions, repeatable validation, and controlled execution in ${primaryTopic}.`,
+      topicTags: definition.topicTags,
+      difficulty: GENERATED_DIFFICULTIES[index] ?? definition.difficulty,
+    })
+  })
 }
 
 const conditionalProbabilityQuestions: QuizQuestion[] = [
@@ -815,15 +904,26 @@ const riskMeasureQuestions: QuizQuestion[] = [
   }),
 ]
 
-export const quizQuestionBank: Record<QuizId, QuizQuestion[]> = {
+const staticQuestionBank: Record<string, QuizQuestion[]> = {
   "q-cond-prob": conditionalProbabilityQuestions,
   "q-garch": garchQuestions,
   "q-execution": executionQuestions,
   "q-risk-measures": riskMeasureQuestions,
 }
 
+const generatedQuestionBank = Object.fromEntries(
+  skillMatrixQuizDefinitions
+    .filter((definition) => !staticQuestionBank[definition.quizId])
+    .map((definition) => [definition.quizId, buildGeneratedQuestionPool(definition)]),
+) as Record<string, QuizQuestion[]>
+
+export const quizQuestionBank: Record<string, QuizQuestion[]> = {
+  ...staticQuestionBank,
+  ...generatedQuestionBank,
+}
+
 export function getQuestionPoolForQuiz(quizId: string): QuizQuestion[] {
-  return quizQuestionBank[quizId as QuizId] ?? []
+  return quizQuestionBank[quizId] ?? []
 }
 
 export function getRandomQuestionsForQuiz(quizId: string, count = QUESTIONS_PER_ATTEMPT): QuizQuestion[] {

@@ -8,6 +8,7 @@ import type {
   InterviewPack, ProfileRecommendation, ProfileSettings,
 } from "./types"
 import { getQuestionPoolForQuiz } from "./quiz-question-bank"
+import { skillMatrixQuizDefinitions } from "./skill-matrix-quiz-definitions"
 import type { StoredQuizProgress } from "./quiz-progress"
 
 // ── Topics ──
@@ -110,53 +111,29 @@ export const courses: Course[] = [
 ]
 
 // ── Quizzes ──
-export const quizzes: Quiz[] = [
-  {
-    id: "q-cond-prob",
-    title: "Conditional Probability",
-    topicTags: ["probability"],
-    difficulty: "Intermediate",
-    timeLimitMinutes: 15,
-    status: "completed",
-    attempts: [
-      { date: "2026-02-25", score: 72, timeSeconds: 780, mistakeBreakdown: { Conceptual: 2, Careless: 1, Implementation: 0 } },
-      { date: "2026-02-20", score: 65, timeSeconds: 840, mistakeBreakdown: { Conceptual: 3, Careless: 1, Implementation: 0 } },
-    ],
-    questions: getQuestionPoolForQuiz("q-cond-prob"),
-  },
-  {
-    id: "q-garch",
-    title: "GARCH Volatility Models",
-    topicTags: ["time-series", "statistics"],
-    difficulty: "Advanced",
-    timeLimitMinutes: 20,
-    status: "not-started",
-    attempts: [],
-    questions: getQuestionPoolForQuiz("q-garch"),
-  },
-  {
-    id: "q-execution",
-    title: "Order Execution & Slippage",
-    topicTags: ["execution", "microstructure"],
-    difficulty: "Intermediate",
-    timeLimitMinutes: 12,
-    status: "completed",
-    attempts: [
-      { date: "2026-02-27", score: 55, timeSeconds: 600, mistakeBreakdown: { Conceptual: 1, Careless: 2, Implementation: 1 } },
-    ],
-    questions: getQuestionPoolForQuiz("q-execution"),
-  },
-  {
-    id: "q-risk-measures",
-    title: "Risk Measures & VaR",
-    topicTags: ["risk", "statistics"],
-    difficulty: "Intermediate",
-    timeLimitMinutes: 15,
-    status: "not-started",
-    attempts: [],
-    questions: getQuestionPoolForQuiz("q-risk-measures"),
-  },
-]
+const seededQuizAttempts: Record<string, QuizAttempt[]> = {
+  "q-cond-prob": [
+    { date: "2026-02-25", score: 72, timeSeconds: 780, mistakeBreakdown: { Conceptual: 2, Careless: 1, Implementation: 0 } },
+    { date: "2026-02-20", score: 65, timeSeconds: 840, mistakeBreakdown: { Conceptual: 3, Careless: 1, Implementation: 0 } },
+  ],
+  "q-execution": [
+    { date: "2026-02-27", score: 55, timeSeconds: 600, mistakeBreakdown: { Conceptual: 1, Careless: 2, Implementation: 1 } },
+  ],
+}
+
+export const quizzes: Quiz[] = skillMatrixQuizDefinitions.map((definition) => {
+  const attempts = seededQuizAttempts[definition.quizId] ?? []
+  return {
+    id: definition.quizId,
+    title: definition.quizTitle,
+    topicTags: definition.topicTags,
+    difficulty: definition.difficulty,
+    timeLimitMinutes: definition.timeLimitMinutes,
+    status: attempts.length > 0 ? "completed" : "not-started",
+    attempts,
+    questions: getQuestionPoolForQuiz(definition.quizId),
+  }
+})
 
 // ── Spaced Repetition Cards ──
 export const srCards: SRCard[] = [
@@ -635,35 +612,20 @@ function resolveSkillProgress(skill: SkillTemplate, options: SkillProgressOption
   }
 }
 
-const skillMatrixTemplates: SkillTemplate[] = [
-  // Math & Probability
-  { id: "sk-1", category: "Math & Probability", skillName: "Bayes' Theorem & Conditional Prob", selfRating: 4, evidenceType: "quiz", badge: "Verified", actionLink: "/learn/quiz/q-cond-prob", source: { type: "quiz", quizId: "q-cond-prob", label: "Conditional Probability" } },
-  { id: "sk-2", category: "Math & Probability", skillName: "Stochastic Processes", selfRating: 3, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations", source: { type: "course", courseId: "c-prob-foundations", label: "Prob Foundations" } },
-  { id: "sk-3", category: "Math & Probability", skillName: "Martingales & Filtrations", selfRating: 2, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-prob-foundations", source: { type: "courseLesson", courseId: "c-prob-foundations", lessonId: "l5", label: "Lesson 5 (Martingales & Stopping Times)" } },
-  // Statistics & Inference
-  { id: "sk-4", category: "Statistics & Inference", skillName: "Hypothesis Testing & p-values", selfRating: 5, evidenceType: "quiz", badge: "Verified", actionLink: "/learn", source: { type: "mastery", topicId: "statistics", label: "Statistics" } },
-  { id: "sk-5", category: "Statistics & Inference", skillName: "Bayesian Inference", selfRating: 3, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures", source: { type: "activityScore", activityId: "a4", label: "Spaced repetition" } },
-  // Time Series & ML
-  { id: "sk-6", category: "Time Series & ML", skillName: "ARIMA / GARCH Modeling", selfRating: 3, evidenceType: "course", badge: "Needs Evidence", actionLink: "/learn/course/c-time-series", source: { type: "course", courseId: "c-time-series", label: "Time Series" } },
-  { id: "sk-7", category: "Time Series & ML", skillName: "Regime Detection", selfRating: 2, evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-001", source: { type: "behavior", metric: "regimeAwareness", label: "regime awareness", sessionId: "ts-001" } },
-  { id: "sk-8", category: "Time Series & ML", skillName: "Volatility Forecasting", selfRating: 2, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn/quiz/q-garch", source: { type: "quiz", quizId: "q-garch", label: "GARCH Volatility Models", fallbackTopicId: "time-series" } },
-  // Optimization
-  { id: "sk-9", category: "Optimization", skillName: "Mean-Variance Portfolio", selfRating: 3, evidenceType: "quiz", badge: "At Risk", actionLink: "/learn/course/c-optimization", source: { type: "mastery", topicId: "optimization", label: "Optimization" } },
-  { id: "sk-10", category: "Optimization", skillName: "Convex Optimization (KKT)", selfRating: 2, evidenceType: "course", badge: "At Risk", actionLink: "/learn/course/c-optimization", source: { type: "course", courseId: "c-optimization", label: "Optimization" } },
-  // Microstructure & Execution
-  { id: "sk-11", category: "Microstructure & Execution", skillName: "Limit Order Books", selfRating: 4, evidenceType: "course", badge: "Verified", actionLink: "/learn/course/c-microstructure", source: { type: "mastery", topicId: "microstructure", label: "Microstructure" } },
-  { id: "sk-12", category: "Microstructure & Execution", skillName: "Market Impact Models", selfRating: 2, evidenceType: "trade", badge: "At Risk", actionLink: "/learn/quiz/q-execution", source: { type: "behavior", metric: "slippageSensitivity", label: "slippage sensitivity", sessionId: "ts-001" } },
-  { id: "sk-13", category: "Microstructure & Execution", skillName: "Order Execution & Slippage", selfRating: 3, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-execution", source: { type: "quiz", quizId: "q-execution", label: "Order Execution & Slippage" } },
-  // Risk Management
-  { id: "sk-14", category: "Risk Management", skillName: "VaR & Expected Shortfall", selfRating: 4, evidenceType: "quiz", badge: "Needs Evidence", actionLink: "/learn/quiz/q-risk-measures", source: { type: "mastery", topicId: "risk", label: "Risk" } },
-  { id: "sk-15", category: "Risk Management", skillName: "Stop-loss Discipline", selfRating: 3, evidenceType: "trade", badge: "At Risk", actionLink: "/trade/sessions/ts-003", source: { type: "behavior", metric: "stopLossDiscipline", label: "stop-loss discipline", sessionId: "ts-003" } },
-  // Python Engineering
-  { id: "sk-16", category: "Python Engineering", skillName: "NumPy / Pandas Pipelines", selfRating: 5, evidenceType: "quiz", badge: "Verified", actionLink: "/learn", source: { type: "mastery", topicId: "python", label: "Python" } },
-  { id: "sk-17", category: "Python Engineering", skillName: "Backtesting Frameworks", selfRating: 4, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "resumeHighlight", highlightId: "rh-2", label: "backtesting project" } },
-  // C++ / Systems
-  { id: "sk-18", category: "C++ / Systems", skillName: "Memory Management", selfRating: 2, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "selfRatingBaseline" } },
-  { id: "sk-19", category: "C++ / Systems", skillName: "Low-latency Patterns", selfRating: 1, evidenceType: "none", badge: "Needs Evidence", actionLink: "/learn", source: { type: "selfRatingBaseline" } },
-]
+const skillMatrixTemplates: SkillTemplate[] = skillMatrixQuizDefinitions.map((definition) => ({
+  id: definition.skillId,
+  category: definition.category,
+  skillName: definition.skillName,
+  selfRating: definition.selfRating,
+  evidenceType: "quiz",
+  badge: "Needs Evidence",
+  actionLink: `/learn/quiz/${definition.quizId}`,
+  source: {
+    type: "quiz",
+    quizId: definition.quizId,
+    label: definition.quizTitle,
+  },
+}))
 
 function toSkillEntry(skill: SkillTemplate, options: SkillProgressOptions = {}): SkillEntry {
   const progress = resolveSkillProgress(skill, options)

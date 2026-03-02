@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -44,7 +45,13 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="cursor-default"><ScoreBar score={skill.measuredScore} /></div>
+            <Link
+              href={skill.actionLink}
+              className="inline-flex rounded-sm cursor-pointer hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label={`Open quiz for ${skill.skillName}`}
+            >
+              <ScoreBar score={skill.measuredScore} />
+            </Link>
           </TooltipTrigger>
           <TooltipContent className="text-xs">
             {skill.evidence}
@@ -60,7 +67,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
             </span>
           </TooltipTrigger>
           <TooltipContent className="text-xs max-w-[200px]">
-            {badge === "Verified" && "Score above 70 with quiz or trading evidence confirming proficiency."}
+            {badge === "Verified" && "Score above 70 with quiz evidence confirming proficiency."}
             {badge === "Needs Evidence" && "Score between 50 and 70. More evidence is needed to validate proficiency."}
             {badge === "At Risk" && "Score below 50. Prioritised in study plan."}
           </TooltipContent>
@@ -68,7 +75,7 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
       </TooltipProvider>
 
       <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" asChild>
-        <a href={skill.actionLink}>Train →</a>
+        <Link href={skill.actionLink}>Train →</Link>
       </Button>
     </div>
   )

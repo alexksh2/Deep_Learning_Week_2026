@@ -26,9 +26,9 @@ import {
   Star,
   X,
   TrendingUp,
+  Target,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { resumeHighlights as initialHighlights } from "@/lib/mock"
 import type { ResumeHighlight } from "@/lib/types"
 import { useAuth } from "@/contexts/AuthContext"
 import {
@@ -52,12 +52,33 @@ interface ResumeData {
   projects: { name: string; description: string | null; technologies: string[]; url: string | null }[]
   certifications: { name: string; issuer: string | null; date: string | null }[]
   assessment: { strengths: string[]; gaps: string[]; quant_relevance: string; overall_score: number }
+  highlights?: string[]
   career_matches?: {
     title: string
     match_percentage: number
     matched_skills: string[]
     missing_skills: string[]
     category: string
+    matched_required?: string[]
+    matched_preferred?: string[]
+    missing_required?: string[]
+    missing_preferred?: string[]
+    required_score?: number
+    preferred_score?: number
+    required_coverage?: string
+    preferred_coverage?: string
+    score_explanation?: string
+    resume_evidence?: { skill: string; snippet: string }[]
+  }[]
+  improvement_recommendations?: {
+    career: string
+    target_skill: string
+    priority: "High" | "Medium" | "Low"
+    gap_type?: "required" | "preferred" | "positioning"
+    why: string
+    action: string
+    resume_basis?: string
+    resume_evidence?: string[]
   }[]
 }
 
@@ -112,7 +133,7 @@ export default function ResumeAnalyserPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const [data, setData]       = useState<ResumeData | null>(null)
-  const [highlights, setHighlights] = useState<ResumeHighlight[]>(initialHighlights)
+  const [highlights, setHighlights] = useState<ResumeHighlight[]>([])
   const inputRef              = useRef<HTMLInputElement>(null)
 
   const toggleConfirmed = (id: string) => {
@@ -166,6 +187,14 @@ export default function ResumeAnalyserPage() {
   useEffect(() => {
     void loadSavedAnalysis()
   }, [loadSavedAnalysis])
+
+  useEffect(() => {
+    if (!data) {
+      setHighlights([])
+      return
+    }
+    setHighlights(buildExtractedHighlights(data))
+  }, [data])
 
   useEffect(() => {
     const onResumeUpdated = () => {
@@ -422,36 +451,42 @@ export default function ResumeAnalyserPage() {
               <div className="flex items-center justify-between gap-3">
                 <CardTitle className="text-sm font-medium">Extracted Highlights</CardTitle>
                 <span className="text-[11px] text-muted-foreground">
-                  Auto-parsed from resume · confirm to activate
+                  Top 3 quant-relevant signals · confirm to activate
                 </span>
               </div>
             </CardHeader>
             <CardContent className="space-y-2">
-              {highlights.map(highlight => (
-                <div
-                  key={highlight.id}
-                  className={`flex items-start justify-between rounded-md border p-3 transition-colors ${
-                    highlight.confirmed ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-muted/20"
-                  }`}
-                >
-                  <div className="flex items-start gap-2 flex-1">
-                    <Checkbox
-                      id={highlight.id}
-                      checked={highlight.confirmed}
-                      onCheckedChange={() => toggleConfirmed(highlight.id)}
-                      className="mt-0.5 h-3.5 w-3.5"
-                    />
-                    <label htmlFor={highlight.id} className="text-xs cursor-pointer leading-relaxed">
-                      {highlight.text}
-                    </label>
+              {highlights.length > 0 ? (
+                highlights.map(highlight => (
+                  <div
+                    key={highlight.id}
+                    className={`flex items-start justify-between rounded-md border p-3 transition-colors ${
+                      highlight.confirmed ? "border-emerald-500/30 bg-emerald-500/5" : "border-border bg-muted/20"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2 flex-1">
+                      <Checkbox
+                        id={highlight.id}
+                        checked={highlight.confirmed}
+                        onCheckedChange={() => toggleConfirmed(highlight.id)}
+                        className="mt-0.5 h-3.5 w-3.5"
+                      />
+                      <label htmlFor={highlight.id} className="text-xs cursor-pointer leading-relaxed">
+                        {highlight.text}
+                      </label>
+                    </div>
+                    {highlight.confirmed && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                        Active
+                      </Badge>
+                    )}
                   </div>
-                  {highlight.confirmed && (
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
-                      Active
-                    </Badge>
-                  )}
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No highlights were extracted from this resume.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -681,8 +716,16 @@ export default function ResumeAnalyserPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {data.career_matches.map((match, i) => (
-                  <div key={i} className="space-y-1">
+                {data.career_matches.map((match, i) => {
+                  const matchedRequired = dedupeStringList(match.matched_required)
+                  const matchedPreferred = dedupeStringList(match.matched_preferred)
+                  const missingRequired = dedupeStringList(match.missing_required ?? match.missing_skills)
+                  const missingPreferred = dedupeStringList(match.missing_preferred)
+                  const evidence = dedupeEvidenceItems(match.resume_evidence)
+                  const reason = buildCareerReason(match)
+
+                  return (
+                    <div key={i} className="space-y-2 rounded-md border bg-muted/20 p-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{match.title}</span>
@@ -696,6 +739,18 @@ export default function ResumeAnalyserPage() {
                         {match.match_percentage}%
                       </span>
                     </div>
+                    {match.required_coverage && match.preferred_coverage && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge variant="secondary" className="text-[10px] font-normal">
+                          Required {match.required_coverage}
+                          {typeof match.required_score === "number" ? ` (+${match.required_score}/60)` : ""}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[10px] font-normal">
+                          Preferred {match.preferred_coverage}
+                          {typeof match.preferred_score === "number" ? ` (+${match.preferred_score}/40)` : ""}
+                        </Badge>
+                      </div>
+                    )}
                     <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all ${
@@ -706,13 +761,104 @@ export default function ResumeAnalyserPage() {
                         style={{ width: `${match.match_percentage}%` }}
                       />
                     </div>
-                    {match.missing_skills.length > 0 && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Missing: {match.missing_skills.join(", ")}
+                    {reason && !(missingRequired.length > 0 && reason.startsWith("Primary constraint:")) && (
+                      <p
+                        className={`text-[11px] leading-relaxed ${
+                          reason.startsWith("Primary constraint:")
+                            ? "font-semibold text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {reason}
                       </p>
                     )}
-                  </div>
-                ))}
+                    <div className="space-y-1">
+                      {matchedRequired.length > 0 && (
+                        <p className="text-[11px] font-bold text-foreground">
+                          Matched required: {matchedRequired.join(", ")}
+                        </p>
+                      )}
+                      {matchedPreferred.length > 0 && (
+                        <p className="text-[11px] font-bold text-foreground">
+                          Matched preferred: {matchedPreferred.join(", ")}
+                        </p>
+                      )}
+                      {missingRequired.length > 0 && (
+                        <p className="text-[11px] font-bold text-foreground">
+                          Critical gap: <span className="text-amber-600 dark:text-amber-400">{missingRequired.join(", ")}</span>
+                        </p>
+                      )}
+                      {missingRequired.length === 0 && missingPreferred.length > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Missing preferred: {missingPreferred.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                    {evidence.length > 0 && (
+                      <div className="space-y-1 pt-0.5">
+                        <p className="text-[11px] font-medium text-muted-foreground">Resume evidence</p>
+                        {evidence.slice(0, 2).map((item, evidenceIndex) => (
+                          <p key={`${match.title}-${item.skill}-${evidenceIndex}`} className="text-[11px] text-muted-foreground leading-relaxed">
+                            {item.skill}: "{item.snippet}"
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    </div>
+                  )
+                })}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Improvement recommendations */}
+          {data.improvement_recommendations && data.improvement_recommendations.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Target className="h-4 w-4" /> How To Improve Match Scores
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {data.improvement_recommendations.map((recommendation, index) => {
+                  const evidenceLines = getRecommendationEvidence(recommendation)
+                  const isPositioningGap = recommendation.gap_type === "positioning"
+                  return (
+                    <div key={`${recommendation.career}-${recommendation.target_skill}-${index}`} className="rounded-md border bg-muted/20 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">
+                          {recommendation.target_skill} for {recommendation.career}
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px]">
+                            {recommendation.priority}
+                          </Badge>
+                          {recommendation.gap_type && (
+                            <Badge variant="secondary" className="text-[10px] capitalize">
+                              {recommendation.gap_type}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                        <span className="font-medium">Why it matters:</span> {recommendation.why}
+                      </p>
+                      <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                        <span className="font-medium">{isPositioningGap ? "How to reposition:" : "What to add:"}</span> {recommendation.action}
+                      </p>
+                      {evidenceLines.length > 0 && (
+                        <div className="mt-1 space-y-1">
+                          <p className="text-[11px] font-medium text-muted-foreground">Evidence from your resume</p>
+                          {evidenceLines.map((line, evidenceIdx) => (
+                            <p key={`${recommendation.career}-${recommendation.target_skill}-ev-${evidenceIdx}`} className="text-[11px] text-muted-foreground leading-relaxed">
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </CardContent>
             </Card>
           )}
@@ -746,4 +892,163 @@ function formatFileSize(sizeBytes?: number): string {
   if (sizeBytes < 1024) return `${sizeBytes} B`
   if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`
   return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+function normalizeHighlight(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const cleaned = value.replace(/\s+/g, " ").trim()
+  if (!cleaned || cleaned.length < 12) return null
+  return cleaned
+}
+
+const MAX_EXTRACTED_HIGHLIGHTS = 3
+const QUANT_HIGHLIGHT_TERMS = [
+  "quant",
+  "python",
+  "c++",
+  "sql",
+  "stochastic",
+  "statistics",
+  "derivatives",
+  "options",
+  "volatility",
+  "risk",
+  "factor",
+  "portfolio",
+  "algorithmic",
+  "backtest",
+  "microstructure",
+  "signal",
+  "time series",
+  "machine learning",
+  "reinforcement learning",
+  "quantlib",
+  "bloomberg",
+  "var",
+  "sharpe",
+  "garch",
+]
+
+function isQuantRelatedHighlight(value: string): boolean {
+  const lower = value.toLowerCase()
+  if (lower.includes("quant")) return true
+  return QUANT_HIGHLIGHT_TERMS.some(term => lower.includes(term))
+}
+
+function pushUniqueHighlights(target: string[], values: unknown[], maxItems: number, requireQuant: boolean) {
+  for (const value of values) {
+    const normalized = normalizeHighlight(value)
+    if (!normalized) continue
+    if (requireQuant && !isQuantRelatedHighlight(normalized)) continue
+    const exists = target.some((item) => item.toLowerCase() === normalized.toLowerCase())
+    if (!exists) target.push(normalized)
+    if (target.length >= maxItems) return
+  }
+}
+
+function dedupeStringList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const cleaned = typeof value === "string" ? value.trim() : ""
+    if (!cleaned) continue
+    const key = cleaned.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(cleaned)
+  }
+  return out
+}
+
+function dedupeEvidenceItems(
+  values: { skill: string; snippet: string }[] | undefined,
+): { skill: string; snippet: string }[] {
+  if (!Array.isArray(values)) return []
+  const out: { skill: string; snippet: string }[] = []
+  const seen = new Set<string>()
+  for (const item of values) {
+    const skill = typeof item?.skill === "string" ? item.skill.trim() : ""
+    const snippet = typeof item?.snippet === "string" ? item.snippet.trim() : ""
+    if (!skill || !snippet) continue
+    const key = `${skill.toLowerCase()}::${snippet.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ skill, snippet })
+  }
+  return out
+}
+
+function buildCareerReason(match: {
+  missing_required?: string[]
+  missing_preferred?: string[]
+  missing_skills?: string[]
+  score_explanation?: string
+}): string | null {
+  const missingRequired = dedupeStringList(match.missing_required ?? match.missing_skills)
+  const missingPreferred = dedupeStringList(match.missing_preferred)
+
+  if (missingRequired.length > 0) {
+    return `Primary constraint: missing required skills (${missingRequired.join(", ")}). Required skills have the highest weight.`
+  }
+  if (missingPreferred.length > 0) {
+    return `All required skills are covered; score is limited by missing preferred skills (${missingPreferred.join(", ")}).`
+  }
+  if (typeof match.score_explanation === "string" && match.score_explanation.trim().length > 0) {
+    return match.score_explanation.trim()
+  }
+  return null
+}
+
+function getRecommendationEvidence(recommendation: {
+  resume_evidence?: string[]
+  resume_basis?: string
+}): string[] {
+  const fromArray = dedupeStringList(recommendation.resume_evidence)
+  if (fromArray.length > 0) return fromArray
+
+  if (!recommendation.resume_basis || typeof recommendation.resume_basis !== "string") return []
+  const marker = "Resume evidence found:"
+  const markerIndex = recommendation.resume_basis.indexOf(marker)
+  const rawEvidence = markerIndex >= 0
+    ? recommendation.resume_basis.slice(markerIndex + marker.length)
+    : recommendation.resume_basis
+
+  const lines = rawEvidence
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => item.includes(":"))
+
+  return dedupeStringList(lines).slice(0, 2)
+}
+
+function buildExtractedHighlights(data: ResumeData): ResumeHighlight[] {
+  const extracted: string[] = []
+
+  if (Array.isArray(data.highlights)) {
+    pushUniqueHighlights(extracted, data.highlights, MAX_EXTRACTED_HIGHLIGHTS, true)
+  }
+
+  if (extracted.length < MAX_EXTRACTED_HIGHLIGHTS) {
+    const experienceBullets = data.experience.flatMap((item) => item.bullets ?? [])
+    pushUniqueHighlights(extracted, experienceBullets, MAX_EXTRACTED_HIGHLIGHTS, true)
+  }
+
+  if (extracted.length < MAX_EXTRACTED_HIGHLIGHTS) {
+    const projectDescriptions = data.projects
+      .map((project) => project.description)
+      .filter((description): description is string => typeof description === "string")
+    pushUniqueHighlights(extracted, projectDescriptions, MAX_EXTRACTED_HIGHLIGHTS, true)
+  }
+
+  if (extracted.length < MAX_EXTRACTED_HIGHLIGHTS && data.summary) {
+    pushUniqueHighlights(extracted, [data.summary], MAX_EXTRACTED_HIGHLIGHTS, true)
+  }
+
+  return extracted.slice(0, MAX_EXTRACTED_HIGHLIGHTS).map((text, index) => ({
+    id: `rh-${index + 1}`,
+    text,
+    confirmed: false,
+  }))
 }

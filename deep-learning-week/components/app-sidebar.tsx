@@ -67,6 +67,7 @@ const navItems: NavItem[] = [
     href: "/profile",
     icon: User,
     children: [
+      { label: "Readiness",       href: "/profile/readiness", icon: BarChart2 },
       { label: "Resume Analyser", href: "/profile/resume",    icon: FileSearch },
       { label: "Interview",       href: "/profile/interview", icon: ClipboardList },
     ],
