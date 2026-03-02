@@ -30,6 +30,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as {
       category: string
+      interviewer?: string
       total: number
       email?: string
       context_block?: string
@@ -47,6 +48,7 @@ export async function POST(request: Request) {
 
     const args = [
       "--category",      body.category,
+      "--interviewer",   body.interviewer ?? "Jane Street",
       "--total",         String(body.total),
       "--context_block", mergedContextBlock,
       "--messages",      JSON.stringify(body.messages),

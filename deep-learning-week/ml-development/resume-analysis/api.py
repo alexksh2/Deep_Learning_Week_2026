@@ -447,103 +447,92 @@ def _build_action_text(skill: str) -> str:
     return f"Add a quantified bullet or project proving {skill} with concrete evidence and outcomes."
 
 
-POSITIONING_SIGNAL_SKILLS: Dict[str, Tuple[str, ...]] = {
-    "algorithmic trading": ("backtesting", "signal research", "market microstructure"),
-    "backtesting": ("algorithmic trading", "signal research", "market microstructure"),
-    "signal research": ("algorithmic trading", "backtesting", "market microstructure"),
-    "market microstructure": ("algorithmic trading", "backtesting", "signal research"),
-}
-
-POSITIONING_SIGNAL_KEYWORDS: Dict[str, Tuple[str, ...]] = {
-    "algorithmic trading": (
-        "trading strategy",
-        "systematic",
-        "signal",
-        "backtest",
-        "out-of-sample",
-        "sharpe",
-        "drawdown",
-        "win rate",
-        "alpha",
-    ),
-}
-
-
-def _build_positioning_action_text(skill: str) -> str:
-    if skill.lower() == "algorithmic trading":
-        return (
-            "Reframe one existing trading bullet to explicitly name Algorithmic Trading, then show "
-            "dataset, strategy logic, and out-of-sample metrics (Sharpe, max drawdown, win rate)."
-        )
-    return (
-        f"Rephrase one existing bullet so {skill} appears explicitly as a named skill, and attach a measurable outcome."
-    )
+_RECOMMENDATION_SYSTEM = (
+    "You classify whether a missing skill gap is a positioning issue for quant resumes.\n"
+    "A positioning issue means the candidate is already doing the work but has not used the "
+    "right label — so a hiring manager scanning for that skill would miss it.\n"
+    "A real gap means the candidate has genuinely not done that type of work.\n\n"
+    "Rules:\n"
+    "1) Use ONLY the supplied `resume_evidence` lines.\n"
+    "2) Never hallucinate evidence or metrics.\n"
+    "3) Set is_positioning=true when `resume_evidence` describes the same underlying work as "
+    "target_skill under a different label.\n"
+    "4) Set is_positioning=false when `resume_evidence` shows a related-but-distinct skill "
+    "that does not constitute doing the target_skill.\n"
+    "5) Keep reason to one concise sentence.\n"
+    "6) Return the same candidate_id provided in input.\n"
+    "7) Return JSON only.\n\n"
+    "Examples:\n"
+    "- target_skill='Algorithmic Trading', evidence includes backtesting strategies with "
+    "Sharpe ratio / drawdown / win-rate → is_positioning=true. "
+    "Building and testing systematic strategies IS algorithmic trading work; the label is missing.\n"
+    "- target_skill='Signal Research', evidence includes backtesting alpha factors or "
+    "studying return predictors → is_positioning=true.\n"
+    "- target_skill='C++', evidence only shows Python or SQL → is_positioning=false. "
+    "Proficiency in one language does not imply proficiency in another.\n"
+    "- target_skill='Stochastic Calculus', evidence only shows general statistics → "
+    "is_positioning=false. Statistics is adjacent but not the same."
+)
 
 
-def _collect_positioning_evidence(
-    target_skill: str,
+def _collect_matched_evidence(
     matched_skills: List[str],
     evidence_by_skill: Dict[str, List[str]],
-    max_items: int = 2,
-) -> Tuple[List[str], List[str]]:
-    target_key = target_skill.lower()
-    signal_skills = POSITIONING_SIGNAL_SKILLS.get(target_key, tuple())
-    signal_keywords = POSITIONING_SIGNAL_KEYWORDS.get(target_key, tuple())
-
+    max_lines: int = 4,
+) -> List[str]:
+    """Return up to max_lines evidence lines from matched skills."""
     lines: List[str] = []
-    supporting_skills: List[str] = []
-    seen_lines: set[str] = set()
-    matched_by_key: Dict[str, str] = {skill.lower(): skill for skill in matched_skills}
-
-    for skill_key in signal_skills:
-        display_skill = matched_by_key.get(skill_key)
-        if not display_skill:
-            continue
-        snippets = evidence_by_skill.get(skill_key, [])
-        if not snippets:
-            continue
-        line = f"{display_skill}: {_trim_text(snippets[0], max_chars=120)}"
-        line_key = line.lower()
-        if line_key in seen_lines:
-            continue
-        seen_lines.add(line_key)
-        lines.append(line)
-        supporting_skills.append(display_skill)
-        if len(lines) >= max_items:
-            return lines, _dedupe_strings(supporting_skills)
-
-    if not signal_keywords:
-        return lines, _dedupe_strings(supporting_skills)
-
     for skill in matched_skills:
-        skill_key = skill.lower()
-        snippets = evidence_by_skill.get(skill_key, [])
+        snippets = evidence_by_skill.get(skill.lower(), [])
         if not snippets:
             continue
-        for snippet in snippets:
-            lowered = snippet.lower()
-            if not any(keyword in lowered for keyword in signal_keywords):
-                continue
-            line = f"{skill}: {_trim_text(snippet, max_chars=120)}"
-            line_key = line.lower()
-            if line_key in seen_lines:
-                continue
-            seen_lines.add(line_key)
-            lines.append(line)
-            supporting_skills.append(skill)
+        lines.append(f"{skill}: {_trim_text(snippets[0], max_chars=120)}")
+        if len(lines) >= max_lines:
             break
-        if len(lines) >= max_items:
-            break
-
-    return lines, _dedupe_strings(supporting_skills)
+    return lines
 
 
-def build_improvement_recommendations(
+def _build_skill_positioning_candidates(
+    career_matches: List[Dict[str, Any]],
+    evidence_by_skill: Dict[str, List[str]],
+    max_skills: int = 10,
+) -> List[Dict[str, Any]]:
+    """One LLM candidate per unique missing skill across all career matches."""
+    seen: set[str] = set()
+    candidates: List[Dict[str, Any]] = []
+
+    for match in career_matches[:5]:
+        matched_required = [s for s in match.get("matched_required", []) if isinstance(s, str)]
+        matched_preferred = [s for s in match.get("matched_preferred", []) if isinstance(s, str)]
+        matched_skills = _dedupe_strings(matched_required + matched_preferred)
+
+        missing_required = [s for s in match.get("missing_required", []) if isinstance(s, str) and s.strip()]
+        missing_preferred = [s for s in match.get("missing_preferred", []) if isinstance(s, str) and s.strip()]
+
+        for skill in missing_required + missing_preferred:
+            skill_lower = skill.lower()
+            if skill_lower in seen:
+                continue
+            seen.add(skill_lower)
+            evidence_lines = _collect_matched_evidence(matched_skills, evidence_by_skill, max_lines=4)
+            candidates.append({
+                "candidate_id": skill_lower,
+                "target_skill": skill,
+                "resume_evidence": evidence_lines,
+            })
+            if len(candidates) >= max_skills:
+                return candidates
+
+    return candidates
+
+
+def _build_recommendation_specs(
     career_matches: List[Dict[str, Any]],
     evidence_by_skill: Dict[str, List[str]],
     max_items: int = 6,
 ) -> List[Dict[str, Any]]:
-    recommendations: List[Dict[str, Any]] = []
+    """Career×skill specs that become the final recommendation entries."""
+    specs: List[Dict[str, Any]] = []
     seen_pairs: set[Tuple[str, str]] = set()
 
     for match in career_matches[:4]:
@@ -551,14 +540,8 @@ def build_improvement_recommendations(
         if not title:
             continue
 
-        missing_required = [
-            s for s in match.get("missing_required", [])
-            if isinstance(s, str) and s.strip()
-        ]
-        missing_preferred = [
-            s for s in match.get("missing_preferred", [])
-            if isinstance(s, str) and s.strip()
-        ]
+        missing_required = [s for s in match.get("missing_required", []) if isinstance(s, str) and s.strip()]
+        missing_preferred = [s for s in match.get("missing_preferred", []) if isinstance(s, str) and s.strip()]
         if not missing_required and not missing_preferred:
             continue
 
@@ -568,55 +551,246 @@ def build_improvement_recommendations(
         matched_preferred = [s for s in match.get("matched_preferred", []) if isinstance(s, str)]
         matched_skills = _dedupe_strings(matched_required + matched_preferred)
 
-        evidence_lines: List[str] = []
-        for skill in matched_skills:
-            snippets = evidence_by_skill.get(skill.lower(), [])
-            if not snippets:
-                continue
-            evidence_lines.append(f"{skill}: {_trim_text(snippets[0], max_chars=120)}")
-            if len(evidence_lines) >= 2:
-                break
-
         for skill in targets[:2]:
             pair = (title.lower(), skill.lower())
             if pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
-
-            positioning_evidence, supporting_skills = _collect_positioning_evidence(
-                target_skill=skill,
-                matched_skills=matched_skills,
-                evidence_by_skill=evidence_by_skill,
-                max_items=2,
-            )
-            is_positioning_gap = len(positioning_evidence) > 0 and len(supporting_skills) > 0
-            if is_positioning_gap:
-                why = (
-                    f"{skill} is not yet explicit for {title}. You already show related evidence "
-                    f"({', '.join(supporting_skills)}), so this is mainly a resume-positioning gap."
-                )
-                action = _build_positioning_action_text(skill)
-                gap_type = "positioning"
-                recommendation_evidence = positioning_evidence
-            else:
-                why = (
-                    f"{skill} is currently missing for {title} ({reason_tag} skill), which directly reduces this career score."
-                )
-                action = _build_action_text(skill)
-                gap_type = reason_tag
-                recommendation_evidence = evidence_lines
-
-            recommendations.append({
+            evidence_lines = _collect_matched_evidence(matched_skills, evidence_by_skill, max_lines=2)
+            specs.append({
                 "career": title,
                 "target_skill": skill,
+                "target_skill_lower": skill.lower(),
                 "priority": "High" if reason_tag == "required" else "Medium",
-                "gap_type": gap_type,
-                "why": why,
-                "action": action,
-                "resume_evidence": recommendation_evidence,
+                "baseline_gap_type": reason_tag,
+                "resume_evidence": evidence_lines,
             })
-            if len(recommendations) >= max_items:
-                return recommendations
+            if len(specs) >= max_items:
+                return specs
+
+    return specs
+
+
+def classify_positioning_with_retries(
+    llm: OpenAILLM,
+    candidates: List[Dict[str, Any]],
+    max_retries: int = 2,
+) -> Dict[str, Dict[str, Any]]:
+    if not candidates:
+        return {}
+
+    user_prompt = (
+        'Return JSON with this exact shape:\n'
+        '{\n'
+        '  "decisions": [\n'
+        '    {\n'
+        '      "candidate_id": "career::target_skill (lowercase)",\n'
+        '      "career": "Career Title",\n'
+        '      "target_skill": "Skill Name",\n'
+        '      "is_positioning": true,\n'
+        '      "reason": "single-sentence reasoning"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n\n'
+        'CANDIDATES:\n'
+        f'{json.dumps(candidates, ensure_ascii=True)}'
+    )
+
+    prompt = user_prompt
+    for attempt in range(max_retries):
+        raw = llm.generate(_RECOMMENDATION_SYSTEM, prompt, max_tokens=1600)
+        try:
+            parsed = json.loads(_extract_json_str(raw))
+            raw_items = parsed.get("decisions", [])
+            if not isinstance(raw_items, list):
+                raise ValueError("decisions must be a list")
+            out: Dict[str, Dict[str, Any]] = {}
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                candidate_id = str(item.get("candidate_id", "")).strip().lower()
+                career = str(item.get("career", "")).strip()
+                target_skill = str(item.get("target_skill", "")).strip()
+                derived_id = f"{career}::{target_skill}".strip().lower()
+                key = candidate_id or derived_id
+                if not key:
+                    continue
+                raw_is_positioning = item.get("is_positioning")
+                is_positioning = False
+                if isinstance(raw_is_positioning, bool):
+                    is_positioning = raw_is_positioning
+                elif isinstance(raw_is_positioning, str):
+                    is_positioning = raw_is_positioning.strip().lower() in {"true", "yes", "1"}
+                reason = _trim_text(str(item.get("reason", "")).strip(), max_chars=220)
+                if not reason:
+                    continue
+                out[key] = {
+                    "is_positioning": is_positioning,
+                    "reason": reason,
+                }
+            return out
+        except (json.JSONDecodeError, ValueError) as e:
+            prompt = (
+                user_prompt
+                + "\n\nREPAIR: Output was invalid JSON matching the required schema."
+                + f"\nError: {e}"
+            )
+            time.sleep(0.5 * (2 ** attempt))
+
+    return {}
+
+
+def _default_recommendation_why(skill: str, title: str, gap_type: str) -> str:
+    if gap_type == "positioning":
+        return (
+            f"{skill} may already be implied for {title}, but it is not explicitly signposted, so role matching can miss it."
+        )
+    return (
+        f"{skill} is currently missing for {title} ({gap_type} skill), which directly reduces this career score."
+    )
+
+
+def _default_recommendation_action(skill: str, gap_type: str) -> str:
+    if gap_type == "positioning":
+        return (
+            f"Rephrase one relevant bullet so {skill} is explicitly named, and attach measurable outputs."
+        )
+    return _build_action_text(skill)
+
+
+def _string_list(value: Any, max_items: int = 5) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+    return _dedupe_strings(cleaned)[:max_items]
+
+
+def ensure_assessment_defaults(
+    resume_data: Dict[str, Any],
+    extraction: Dict[str, Any],
+    career_matches: List[Dict[str, Any]],
+) -> None:
+    assessment = resume_data.get("assessment")
+    if not isinstance(assessment, dict):
+        assessment = {}
+        resume_data["assessment"] = assessment
+
+    strengths = _string_list(assessment.get("strengths"))
+    gaps = _string_list(assessment.get("gaps"))
+
+    skills_raw = extraction.get("skills", [])
+    skills_list = skills_raw if isinstance(skills_raw, list) else []
+
+    if not strengths:
+        ranked_strengths: List[Tuple[float, str]] = []
+        for item in skills_list:
+            if not isinstance(item, dict):
+                continue
+            skill_name = item.get("skill")
+            if not isinstance(skill_name, str) or not skill_name.strip():
+                continue
+            category = item.get("category")
+            if isinstance(category, str) and not _is_quant_category(category):
+                continue
+            snippets = item.get("evidence", [])
+            if not isinstance(snippets, list) or len(snippets) == 0:
+                continue
+            confidence = _to_float(item.get("confidence"), default=0.0)
+            ranked_strengths.append((confidence, skill_name.strip()))
+        ranked_strengths.sort(key=lambda row: row[0], reverse=True)
+        strengths = _dedupe_strings([name for _, name in ranked_strengths])[:4]
+
+    top_match = career_matches[0] if career_matches else {}
+    if not gaps and isinstance(top_match, dict):
+        missing_required = _string_list(top_match.get("missing_required"), max_items=4)
+        missing_preferred = _string_list(top_match.get("missing_preferred"), max_items=4)
+        gaps = _dedupe_strings(missing_required + missing_preferred)[:4]
+
+    if not strengths and isinstance(top_match, dict):
+        matched_required = _string_list(top_match.get("matched_required"), max_items=4)
+        matched_preferred = _string_list(top_match.get("matched_preferred"), max_items=4)
+        strengths = _dedupe_strings(matched_required + matched_preferred)[:4]
+
+    quant_relevance = assessment.get("quant_relevance")
+    if not isinstance(quant_relevance, str) or not quant_relevance.strip():
+        if career_matches:
+            leader = career_matches[0]
+            leader_title = str(leader.get("title", "quant roles")).strip()
+            leader_score = int(_to_float(leader.get("match_percentage"), default=0.0))
+            quant_relevance = (
+                f"Profile shows quant-relevant signals with strongest fit currently around {leader_title} "
+                f"({leader_score}% match)."
+            )
+        else:
+            quant_relevance = "Profile contains quant-related signals, but evidence is currently limited."
+
+    overall_score_raw = assessment.get("overall_score")
+    overall_score = int(_to_float(overall_score_raw, default=0.0))
+    if overall_score < 1 or overall_score > 10:
+        if career_matches:
+            leader = career_matches[0]
+            leader_score = int(_to_float(leader.get("match_percentage"), default=0.0))
+            overall_score = max(1, min(10, round(leader_score / 10)))
+        else:
+            overall_score = 1
+
+    assessment["strengths"] = strengths
+    assessment["gaps"] = gaps
+    assessment["quant_relevance"] = quant_relevance
+    assessment["overall_score"] = overall_score
+
+
+def build_improvement_recommendations(
+    career_matches: List[Dict[str, Any]],
+    evidence_by_skill: Dict[str, List[str]],
+    llm: OpenAILLM,
+    max_items: int = 6,
+) -> List[Dict[str, Any]]:
+    # Classify positioning once per unique missing skill (not per career×skill)
+    skill_candidates = _build_skill_positioning_candidates(career_matches, evidence_by_skill)
+    llm_decisions = classify_positioning_with_retries(llm, skill_candidates)
+
+    # Build per-career×skill recommendation specs
+    specs = _build_recommendation_specs(career_matches, evidence_by_skill, max_items)
+    recommendations: List[Dict[str, Any]] = []
+
+    for spec in specs:
+        career = str(spec.get("career", "")).strip()
+        target_skill = str(spec.get("target_skill", "")).strip()
+        if not career or not target_skill:
+            continue
+        baseline_gap_type = str(spec.get("baseline_gap_type", "preferred")).strip().lower()
+        if baseline_gap_type not in {"required", "preferred"}:
+            baseline_gap_type = "preferred"
+        evidence_lines = [
+            item for item in spec.get("resume_evidence", [])
+            if isinstance(item, str) and item.strip()
+        ][:2]
+
+        # Look up by skill only — same decision applies across all careers
+        skill_lower = spec.get("target_skill_lower", target_skill.lower())
+        decision = llm_decisions.get(skill_lower, {})
+        is_positioning = bool(decision.get("is_positioning", False))
+        gap_type = "positioning" if (is_positioning and evidence_lines) else baseline_gap_type
+
+        if gap_type == "positioning":
+            why = str(decision.get("reason", "")).strip() or _default_recommendation_why(
+                target_skill, career, gap_type,
+            )
+        else:
+            why = _default_recommendation_why(target_skill, career, gap_type)
+
+        action = _default_recommendation_action(target_skill, gap_type)
+
+        recommendations.append({
+            "career": career,
+            "target_skill": target_skill,
+            "priority": str(spec.get("priority", "Medium")),
+            "gap_type": gap_type,
+            "why": why,
+            "action": action,
+            "resume_evidence": evidence_lines,
+        })
 
     return recommendations
 
@@ -1053,9 +1227,11 @@ def main() -> None:
     # Career matching
     career_matches = calculate_career_matches(skill_names, evidence_by_skill)[:8]
     resume_data["career_matches"] = career_matches
+    ensure_assessment_defaults(resume_data, extraction, career_matches)
     resume_data["improvement_recommendations"] = build_improvement_recommendations(
         career_matches=career_matches,
         evidence_by_skill=evidence_by_skill,
+        llm=llm,
     )
 
     # Single JSON blob to stdout — Next.js route reads this

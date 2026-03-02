@@ -40,6 +40,24 @@ type ResumeAnalysisRow = {
   updated_at: string
 }
 
+type InterviewResultRow = {
+  id: string
+  user_email: string
+  interviewer: string
+  category: string
+  question_count: number
+  answered_count: number
+  average_score: number
+  strong_answers: number
+  needs_work_answers: number
+  duration_minutes: number
+  score_rows_json: string
+  started_at: string
+  completed_at: string
+  created_at: string
+  updated_at: string
+}
+
 let db: DatabaseSync | null = null
 
 function getDb(): DatabaseSync {
@@ -120,6 +138,23 @@ function getDb(): DatabaseSync {
       analysis_json TEXT NOT NULL,
       source TEXT NOT NULL,
       analyzed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS interview_results (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      interviewer TEXT NOT NULL,
+      category TEXT NOT NULL,
+      question_count INTEGER NOT NULL,
+      answered_count INTEGER NOT NULL,
+      average_score REAL NOT NULL,
+      strong_answers INTEGER NOT NULL,
+      needs_work_answers INTEGER NOT NULL,
+      duration_minutes INTEGER NOT NULL,
+      score_rows_json TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `)
@@ -520,6 +555,107 @@ export type DbResumeAnalysis = {
   updatedAt: string
 }
 
+export type InterviewScoreRow = {
+  questionIndex: number
+  score: number
+  question: string
+  answer: string
+  feedback: string
+}
+
+export type DbInterviewResult = {
+  id: string
+  interviewer: string
+  category: string
+  questionCount: number
+  answeredCount: number
+  averageScore: number
+  strongAnswers: number
+  needsWorkAnswers: number
+  durationMinutes: number
+  scoreRows: InterviewScoreRow[]
+  startedAt: string
+  completedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function splitFeedbackAndNextQuestion(content: string): { feedback: string; nextQuestion: string | null } {
+  const lines = content.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const trimmed = lines[index].trim()
+    if (!trimmed) continue
+    if (!trimmed.endsWith("?") || trimmed.startsWith("**")) break
+
+    const feedback = lines.slice(0, index).join("\n").trim()
+    if (!feedback || feedback.toLowerCase().includes("that concludes our session")) break
+    return { feedback, nextQuestion: trimmed }
+  }
+
+  return { feedback: content.trim(), nextQuestion: null }
+}
+
+function normalizeInterviewScoreRows(rows: InterviewScoreRow[]): InterviewScoreRow[] {
+  const normalized = rows
+    .map((row, index) => {
+      if (!row || typeof row !== "object") return null
+      const question = typeof row.question === "string" ? row.question.trim() : ""
+      const answer = typeof row.answer === "string" ? row.answer.trim() : ""
+      const rawFeedback = typeof row.feedback === "string" ? row.feedback : ""
+      const rawScore = typeof row.score === "number" && Number.isFinite(row.score) ? row.score : 0
+      const rawQuestionIndex = typeof row.questionIndex === "number" && Number.isFinite(row.questionIndex)
+        ? row.questionIndex
+        : index + 1
+
+      if (!question || !answer) return null
+
+      const { feedback, nextQuestion } = splitFeedbackAndNextQuestion(rawFeedback)
+      return {
+        row: {
+          questionIndex: clampNumber(Math.round(rawQuestionIndex), 1, 1000),
+          score: clampNumber(Math.round(rawScore), 1, 5),
+          question,
+          answer,
+          feedback,
+        } satisfies InterviewScoreRow,
+        nextQuestion,
+      }
+    })
+    .filter((entry): entry is { row: InterviewScoreRow; nextQuestion: string | null } => Boolean(entry))
+
+  const shouldRepairQuestionChain =
+    normalized.length > 1 &&
+    new Set(normalized.map((entry) => entry.row.question)).size === 1 &&
+    normalized.some((entry) => Boolean(entry.nextQuestion))
+
+  return normalized.map((entry, index) => {
+    const previousNextQuestion = index > 0 ? normalized[index - 1]?.nextQuestion : null
+    return {
+      ...entry.row,
+      question: shouldRepairQuestionChain && previousNextQuestion ? previousNextQuestion : entry.row.question,
+    }
+  })
+}
+
+function summarizeInterviewScoreRows(scoreRows: InterviewScoreRow[]) {
+  const scores = scoreRows.map((row) => row.score)
+  const answeredCount = clampNumber(scoreRows.length, 0, 100)
+  const averageScore = scores.length
+    ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2))
+    : 0
+
+  return {
+    answeredCount,
+    averageScore,
+    strongAnswers: scores.filter((score) => score >= 4).length,
+    needsWorkAnswers: scores.filter((score) => score <= 2).length,
+  }
+}
+
 export function getResumeAnalysis(email: string): DbResumeAnalysis | null {
   const sqlite = getDb()
   const row = sqlite
@@ -566,5 +702,131 @@ export function upsertResumeAnalysis(
     source,
     analyzedAt: timestamp,
     updatedAt: timestamp,
+  }
+}
+
+function rowToInterviewResult(row: InterviewResultRow): DbInterviewResult {
+  const scoreRows = normalizeInterviewScoreRows(parseJsonArray<InterviewScoreRow>(row.score_rows_json))
+  const hasScores = scoreRows.length > 0
+  const scoreSummary = summarizeInterviewScoreRows(scoreRows)
+  const answeredCount = hasScores ? scoreSummary.answeredCount : clampNumber(row.answered_count, 0, 100)
+  const averageScore = hasScores ? scoreSummary.averageScore : clampNumber(row.average_score, 0, 5)
+  const strongAnswers = hasScores ? scoreSummary.strongAnswers : clampNumber(row.strong_answers, 0, 100)
+  const needsWorkAnswers = hasScores ? scoreSummary.needsWorkAnswers : clampNumber(row.needs_work_answers, 0, 100)
+
+  return {
+    id: row.id,
+    interviewer: row.interviewer,
+    category: row.category,
+    questionCount: clampNumber(Math.max(row.question_count, answeredCount), 1, 100),
+    answeredCount,
+    averageScore,
+    strongAnswers,
+    needsWorkAnswers,
+    durationMinutes: row.duration_minutes,
+    scoreRows,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function getInterviewResults(email: string, limit = 20): DbInterviewResult[] {
+  const sqlite = getDb()
+  const rows = sqlite
+    .prepare(`
+      SELECT * FROM interview_results
+      WHERE user_email = ?
+      ORDER BY completed_at DESC
+      LIMIT ?
+    `)
+    .all(email.toLowerCase(), Math.max(limit, 1)) as InterviewResultRow[]
+  return rows.map(rowToInterviewResult)
+}
+
+export function upsertInterviewResult(
+  email: string,
+  result: Omit<DbInterviewResult, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string },
+): DbInterviewResult {
+  const sqlite = getDb()
+  const timestamp = new Date().toISOString()
+  const createdAt = result.createdAt ?? timestamp
+  const updatedAt = result.updatedAt ?? timestamp
+  const scoreRows = normalizeInterviewScoreRows(result.scoreRows)
+  const hasScores = scoreRows.length > 0
+  const scoreSummary = summarizeInterviewScoreRows(scoreRows)
+  const answeredCount = hasScores ? scoreSummary.answeredCount : clampNumber(Math.round(result.answeredCount), 0, 100)
+  const averageScore = hasScores ? scoreSummary.averageScore : clampNumber(result.averageScore, 0, 5)
+  const strongAnswers = hasScores ? scoreSummary.strongAnswers : clampNumber(Math.round(result.strongAnswers), 0, 100)
+  const needsWorkAnswers = hasScores ? scoreSummary.needsWorkAnswers : clampNumber(Math.round(result.needsWorkAnswers), 0, 100)
+  const questionCount = clampNumber(Math.max(Math.round(result.questionCount), answeredCount), 1, 100)
+  const durationMinutes = clampNumber(Math.round(result.durationMinutes), 0, 240)
+
+  sqlite
+    .prepare(`
+      INSERT OR REPLACE INTO interview_results (
+        id,
+        user_email,
+        interviewer,
+        category,
+        question_count,
+        answered_count,
+        average_score,
+        strong_answers,
+        needs_work_answers,
+        duration_minutes,
+        score_rows_json,
+        started_at,
+        completed_at,
+        created_at,
+        updated_at
+      ) VALUES (
+        @id,
+        @user_email,
+        @interviewer,
+        @category,
+        @question_count,
+        @answered_count,
+        @average_score,
+        @strong_answers,
+        @needs_work_answers,
+        @duration_minutes,
+        @score_rows_json,
+        @started_at,
+        @completed_at,
+        @created_at,
+        @updated_at
+      )
+    `)
+    .run({
+      id: result.id,
+      user_email: email.toLowerCase(),
+      interviewer: result.interviewer,
+      category: result.category,
+      question_count: questionCount,
+      answered_count: answeredCount,
+      average_score: averageScore,
+      strong_answers: strongAnswers,
+      needs_work_answers: needsWorkAnswers,
+      duration_minutes: durationMinutes,
+      score_rows_json: JSON.stringify(scoreRows),
+      started_at: result.startedAt,
+      completed_at: result.completedAt,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    })
+
+  return {
+    ...result,
+    questionCount,
+    answeredCount,
+    averageScore,
+    strongAnswers,
+    needsWorkAnswers,
+    durationMinutes,
+    scoreRows,
+    createdAt,
+    updatedAt,
   }
 }

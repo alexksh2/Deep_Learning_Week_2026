@@ -542,56 +542,71 @@ function LearnContent() {
               </Select>
             </div>
 
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Quiz</TableHead>
-                    <TableHead className="w-28">Topics</TableHead>
-                    <TableHead className="w-24">Difficulty</TableHead>
-                    <TableHead className="w-20">Status</TableHead>
-                    <TableHead className="w-24">Last Score</TableHead>
-                    <TableHead className="w-28">Mistakes</TableHead>
-                    <TableHead className="w-16"></TableHead>
+            <Card className="overflow-hidden">
+              <Table className="min-w-[980px]">
+                <TableHeader className="bg-muted/20">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[28rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Quiz</TableHead>
+                    <TableHead className="w-[16rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Topics</TableHead>
+                    <TableHead className="w-[9rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Difficulty</TableHead>
+                    <TableHead className="w-[9rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Status</TableHead>
+                    <TableHead className="w-[9rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Last Score</TableHead>
+                    <TableHead className="w-[14rem] px-5 py-3 text-[11px] uppercase tracking-wide text-muted-foreground">Mistakes</TableHead>
+                    <TableHead className="w-[5rem] px-5 py-3 text-right text-[11px] uppercase tracking-wide text-muted-foreground">Start</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {filteredQuizzes.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="px-5 py-10 text-center text-sm text-muted-foreground">
+                        No quizzes match your current filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
                   {filteredQuizzes.map((quiz) => {
                     const lastAttempt = quiz.attempts[0]
                     return (
                       <TableRow key={quiz.id}>
-                        <TableCell className="text-sm font-medium">
-                          <Link href={`/learn/quiz/${quiz.id}`} className="hover:underline">
-                            {quiz.title}
-                          </Link>
+                        <TableCell className="px-5 py-4">
+                          <div className="space-y-1.5">
+                            <Link href={`/learn/quiz/${quiz.id}`} className="text-sm font-medium leading-snug hover:underline">
+                              {quiz.title}
+                            </Link>
+                            <p className="text-xs text-muted-foreground">
+                              {quiz.questions.length} questions • {quiz.timeLimitMinutes} min
+                            </p>
+                          </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 flex-wrap">
+                        <TableCell className="px-5 py-4">
+                          <div className="flex max-w-[15rem] flex-wrap gap-1.5">
                             {quiz.topicTags.map((t) => (
-                              <span key={t} className="text-[10px] font-mono uppercase text-muted-foreground">
+                              <span
+                                key={t}
+                                className="rounded-sm bg-muted/50 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide text-muted-foreground"
+                              >
                                 {getTopicLabel(t)}
                               </span>
                             ))}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="px-5 py-4">
                           <DifficultyBadge difficulty={quiz.difficulty} />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="px-5 py-4">
                           <StatusBadge status={quiz.status} />
                         </TableCell>
-                        <TableCell className="font-mono text-sm">
+                        <TableCell className="px-5 py-4 font-mono text-sm tabular-nums">
                           {lastAttempt ? `${lastAttempt.score}%` : "---"}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="px-5 py-4">
                           {lastAttempt ? (
-                            <div className="flex gap-1">
+                            <div className="flex flex-wrap gap-1.5">
                               {Object.entries(lastAttempt.mistakeBreakdown).map(
                                 ([type, count]) =>
                                   count > 0 && (
                                     <Tooltip key={type}>
                                       <TooltipTrigger>
-                                        <Badge variant="secondary" className="text-[9px] font-mono">
+                                        <Badge variant="secondary" className="text-[10px] font-mono">
                                           {type.charAt(0)}:{count}
                                         </Badge>
                                       </TooltipTrigger>
@@ -606,10 +621,10 @@ function LearnContent() {
                             <span className="text-xs text-muted-foreground">---</span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Button asChild size="sm" variant="ghost" className="h-7 text-xs">
+                        <TableCell className="px-5 py-4 text-right">
+                          <Button asChild size="sm" variant="ghost" className="h-8 w-8 p-0">
                             <Link href={`/learn/quiz/${quiz.id}`}>
-                              <Play className="h-3 w-3" />
+                              <Play className="h-3.5 w-3.5" />
                             </Link>
                           </Button>
                         </TableCell>

@@ -821,7 +821,6 @@ export default function ResumeAnalyserPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {data.improvement_recommendations.map((recommendation, index) => {
-                  const evidenceLines = getRecommendationEvidence(recommendation)
                   const isPositioningGap = recommendation.gap_type === "positioning"
                   return (
                     <div key={`${recommendation.career}-${recommendation.target_skill}-${index}`} className="rounded-md border bg-muted/20 p-3">
@@ -846,16 +845,6 @@ export default function ResumeAnalyserPage() {
                       <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
                         <span className="font-medium">{isPositioningGap ? "How to reposition:" : "What to add:"}</span> {recommendation.action}
                       </p>
-                      {evidenceLines.length > 0 && (
-                        <div className="mt-1 space-y-1">
-                          <p className="text-[11px] font-medium text-muted-foreground">Evidence from your resume</p>
-                          {evidenceLines.map((line, evidenceIdx) => (
-                            <p key={`${recommendation.career}-${recommendation.target_skill}-ev-${evidenceIdx}`} className="text-[11px] text-muted-foreground leading-relaxed">
-                              {line}
-                            </p>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   )
                 })}
@@ -998,29 +987,6 @@ function buildCareerReason(match: {
     return match.score_explanation.trim()
   }
   return null
-}
-
-function getRecommendationEvidence(recommendation: {
-  resume_evidence?: string[]
-  resume_basis?: string
-}): string[] {
-  const fromArray = dedupeStringList(recommendation.resume_evidence)
-  if (fromArray.length > 0) return fromArray
-
-  if (!recommendation.resume_basis || typeof recommendation.resume_basis !== "string") return []
-  const marker = "Resume evidence found:"
-  const markerIndex = recommendation.resume_basis.indexOf(marker)
-  const rawEvidence = markerIndex >= 0
-    ? recommendation.resume_basis.slice(markerIndex + marker.length)
-    : recommendation.resume_basis
-
-  const lines = rawEvidence
-    .split("|")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .filter((item) => item.includes(":"))
-
-  return dedupeStringList(lines).slice(0, 2)
 }
 
 function buildExtractedHighlights(data: ResumeData): ResumeHighlight[] {

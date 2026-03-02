@@ -2,12 +2,12 @@
 
 import { use, useState, useEffect, useCallback } from "react"
 import Link from "next/link"
-import { quizzes, masteryData, getTopicLabel, recommendations } from "@/lib/mock"
+import { useRouter } from "next/navigation"
+import { quizzes, getTopicLabel, recommendations } from "@/lib/mock"
 import { getQuestionPoolForQuiz, getRandomQuestionsForQuiz, QUESTIONS_PER_ATTEMPT } from "@/lib/quiz-question-bank"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -43,7 +43,7 @@ import {
   XCircle,
   ArrowRight,
 } from "lucide-react"
-import type { Confidence, QuizAttempt, QuizQuestion, QuizStatus } from "@/lib/types"
+import type { Confidence, MistakeType, QuizAttempt, QuizQuestion, QuizStatus } from "@/lib/types"
 import { useNotifications } from "@/contexts/NotificationContext"
 import { useAuth } from "@/contexts/AuthContext"
 import type { InProgressQuizState, StoredQuizProgress } from "@/lib/quiz-progress"
@@ -70,6 +70,31 @@ function normalizeQuestionState(value: unknown): QuestionState {
     confidence: isConfidence(candidate.confidence) ? candidate.confidence : "Med",
     flagged: candidate.flagged === true,
   }
+}
+
+function classifyMistake(question: QuizQuestion, state: QuestionState): MistakeType {
+  if (question.difficulty === "Advanced") return "Implementation"
+  if (state.confidence === "High") return "Careless"
+  return "Conceptual"
+}
+
+function buildMistakeBreakdown(questions: QuizQuestion[], states: QuestionState[]): Record<MistakeType, number> {
+  const breakdown: Record<MistakeType, number> = {
+    Conceptual: 0,
+    Careless: 0,
+    Implementation: 0,
+  }
+
+  questions.forEach((question, index) => {
+    const state = states[index]
+    if (!state) return
+    const isCorrect =
+      state.answer.trim().toLowerCase() === question.correctAnswer.trim().toLowerCase()
+    if (isCorrect) return
+    breakdown[classifyMistake(question, state)]++
+  })
+
+  return breakdown
 }
 
 function restoreAttemptFromProgress(
@@ -108,6 +133,7 @@ function restoreAttemptFromProgress(
 export default function QuizPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const quiz = quizzes.find((q) => q.id === id)
+  const router = useRouter()
   const { addNotification } = useNotifications()
   const { user } = useAuth()
 
@@ -120,6 +146,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
   const [submitted, setSubmitted] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -133,6 +160,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
       setAttemptStartedAt(new Date().toISOString())
       setSubmitted(false)
       setShowConfirm(false)
+      setShowLeaveConfirm(false)
     }
 
     async function initializeAttempt() {
@@ -150,6 +178,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
       setAttemptInitialized(false)
       setSubmitted(false)
       setShowConfirm(false)
+      setShowLeaveConfirm(false)
 
       if (!user?.email) {
         if (!active) return
@@ -300,18 +329,14 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
         states[i]?.answer.trim().toLowerCase() === q.correctAnswer.trim().toLowerCase(),
     ).length
     const score = Math.round((correct / attemptQuestions.length) * 100)
-    const wrongCount = Math.max(0, attemptQuestions.length - correct)
     const elapsedSeconds = Math.max(0, quiz.timeLimitMinutes * 60 - timeLeft)
+    const mistakeBreakdown = buildMistakeBreakdown(attemptQuestions, states)
 
     const newAttempt: QuizAttempt = {
       date: new Date().toISOString().slice(0, 10),
       score,
       timeSeconds: elapsedSeconds,
-      mistakeBreakdown: {
-        Conceptual: wrongCount,
-        Careless: 0,
-        Implementation: 0,
-      },
+      mistakeBreakdown,
     }
     const updatedAttempts = [newAttempt, ...attemptsHistory]
 
@@ -333,6 +358,23 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     }
   }, [quiz, attemptQuestions, states, attemptsHistory, addNotification, timeLeft, user?.email, saveQuizProgress])
 
+  const handleLeaveQuiz = useCallback(async () => {
+    if (!quiz) return
+    if (user?.email && attemptQuestions.length > 0 && states.length === attemptQuestions.length) {
+      const inProgress: InProgressQuizState = {
+        questionIds: attemptQuestions.map((question) => question.id),
+        states,
+        current,
+        timeLeft,
+        startedAt: attemptStartedAt || new Date().toISOString(),
+      }
+      await saveQuizProgress("in-progress", attemptsHistory, inProgress)
+    }
+
+    setShowLeaveConfirm(false)
+    router.push("/learn?tab=quizzes")
+  }, [quiz, user?.email, attemptQuestions, states, current, timeLeft, attemptStartedAt, saveQuizProgress, attemptsHistory, router])
+
   if (!quiz) {
     return (
       <div className="p-8 text-center">
@@ -348,6 +390,8 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
 
   const question = attemptQuestions[current]
   const state = states[current]
+  const answeredCount = states.filter((s) => s.answer.trim().length > 0).length
+  const canLeaveQuiz = answeredCount >= 5
 
   function updateState(idx: number, updates: Partial<QuestionState>) {
     setStates((prev) =>
@@ -368,23 +412,17 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
     const score = Math.round((correct / attemptQuestions.length) * 100)
     const topicBreakdown: Record<string, { correct: number; total: number }> = {}
     attemptQuestions.forEach((q, i) => {
-      q.topicTags.forEach((t) => {
-        if (!topicBreakdown[t]) topicBreakdown[t] = { correct: 0, total: 0 }
-        topicBreakdown[t].total++
-        if (getResult(q, states[i])) topicBreakdown[t].correct++
-      })
+      const primaryTopic = q.topicTags[0] ?? quiz.topicTags[0] ?? "probability"
+      if (!topicBreakdown[primaryTopic]) topicBreakdown[primaryTopic] = { correct: 0, total: 0 }
+      topicBreakdown[primaryTopic].total++
+      if (getResult(q, states[i])) topicBreakdown[primaryTopic].correct++
     })
+
+    const mistakeBreakdown = buildMistakeBreakdown(attemptQuestions, states)
 
     const wrongQuestions = attemptQuestions
       .map((q, i) => ({ q, s: states[i] }))
       .filter(({ q, s }) => !getResult(q, s))
-
-    const mistakeBreakdown = { Conceptual: 0, Careless: 0, Implementation: 0 }
-    wrongQuestions.forEach(({ q, s }) => {
-      if (q.difficulty === "hard") mistakeBreakdown.Implementation++
-      else if (s.confidence === "High") mistakeBreakdown.Careless++
-      else mistakeBreakdown.Conceptual++
-    })
 
     const weakTopics = new Set(
       wrongQuestions.flatMap(({ q }) => q.topicTags)
@@ -463,6 +501,9 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                     </Badge>
                   </div>
                 ))}
+                <p className="pt-1 text-[10px] text-muted-foreground">
+                  Implementation = wrong on Advanced questions (application/execution gap).
+                </p>
               </CardContent>
             </Card>
 
@@ -547,7 +588,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
           </BreadcrumbList>
         </Breadcrumb>
 
-        <div className="grid gap-4 lg:grid-cols-[180px_1fr_220px]">
+        <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
           {/* Left: Question navigator */}
           <Card className="p-3">
             <p className="text-xs font-medium mb-2 text-muted-foreground uppercase tracking-wider">Questions</p>
@@ -664,6 +705,29 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                   </Button>
                 </div>
                 <div className="flex items-center gap-2">
+                  {canLeaveQuiz && (
+                    <Dialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-8 text-xs">
+                          Leave Quiz
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Leave Quiz?</DialogTitle>
+                          <DialogDescription>
+                            Your progress will be saved and you can resume later.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setShowLeaveConfirm(false)}>
+                            Stay in Quiz
+                          </Button>
+                          <Button onClick={() => void handleLeaveQuiz()}>Leave</Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -694,7 +758,7 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
                         <DialogHeader>
                           <DialogTitle>Submit Quiz?</DialogTitle>
                           <DialogDescription>
-                            You have answered {states.filter((s) => s.answer).length} of{" "}
+                            You have answered {answeredCount} of{" "}
                             {attemptQuestions.length} questions.
                             {states.some((s) => s.flagged) && (
                               <span className="block mt-1 text-chart-1">
@@ -717,33 +781,6 @@ export default function QuizPage({ params }: { params: Promise<{ id: string }> }
             </CardContent>
           </Card>
 
-          {/* Right: Topic context */}
-          <Card className="p-3">
-            <p className="text-xs font-medium mb-2 text-muted-foreground uppercase tracking-wider">Topic Context</p>
-            {question.topicTags.map((t) => {
-              const mastery = masteryData.find((m) => m.topicId === t)
-              return (
-                <div key={t} className="mb-3">
-                  <p className="text-xs font-mono uppercase">{getTopicLabel(t)}</p>
-                  {mastery && (
-                    <div className="mt-1">
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
-                        <span>Your mastery</span>
-                        <span className="font-mono tabular-nums">{mastery.score}%</span>
-                      </div>
-                      <Progress value={mastery.score} className="h-1" />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-            <div className="mt-3 pt-3 border-t border-border">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Difficulty</p>
-              <Badge variant="outline" className="text-[10px] font-mono">
-                {question.difficulty}
-              </Badge>
-            </div>
-          </Card>
         </div>
       </div>
     </TooltipProvider>
