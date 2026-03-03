@@ -873,7 +873,8 @@ pip install -r ml-development/interview-pipeline/requirements.txt
 # Environment configuration
 cp .env.local.example .env.local
 # Required: OPENAI_API_KEY
-# Optional: ALPACA_API_KEY, ALPACA_SECRET_KEY (for live trading features)
+# Required: ALPACA_API_KEY, ALPACA_SECRET_KEY (for trading dashboard, behavioral analytics, and portfolio features)
+#   Sign up at https://alpaca.markets → Paper Trading → API Keys
 
 # Start application
 npm run dev
