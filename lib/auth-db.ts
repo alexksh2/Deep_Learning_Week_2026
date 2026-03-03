@@ -58,6 +58,12 @@ type InterviewResultRow = {
   updated_at: string
 }
 
+type ReadinessStudyPlanRow = {
+  user_email: string
+  payload_json: string
+  updated_at: string
+}
+
 let db: DatabaseSync | null = null
 
 function getDb(): DatabaseSync {
@@ -155,6 +161,11 @@ function getDb(): DatabaseSync {
       started_at TEXT NOT NULL,
       completed_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS readiness_study_plans (
+      user_email TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
   `)
@@ -545,6 +556,65 @@ export function upsertQuizProgress(email: string, progress: Omit<StoredQuizProgr
     attempts: progress.attempts,
     inProgress: progress.inProgress,
     updatedAt,
+  }
+}
+
+export type DbReadinessStudyPlan = {
+  payload: Record<string, unknown>
+  updatedAt: string
+}
+
+function ensureReadinessStudyPlansTable(sqlite: DatabaseSync): void {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS readiness_study_plans (
+      user_email TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `)
+}
+
+export function getReadinessStudyPlan(email: string): DbReadinessStudyPlan | null {
+  const sqlite = getDb()
+  ensureReadinessStudyPlansTable(sqlite)
+  const row = sqlite
+    .prepare("SELECT * FROM readiness_study_plans WHERE user_email = ?")
+    .get(email.toLowerCase()) as ReadinessStudyPlanRow | undefined
+
+  if (!row) return null
+
+  const payload = parseJsonObject<Record<string, unknown>>(row.payload_json)
+  if (!payload) return null
+
+  return {
+    payload,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function upsertReadinessStudyPlan(
+  email: string,
+  payload: Record<string, unknown>,
+  updatedAt?: string,
+): DbReadinessStudyPlan {
+  const sqlite = getDb()
+  ensureReadinessStudyPlansTable(sqlite)
+  const timestamp = updatedAt ?? new Date().toISOString()
+
+  sqlite
+    .prepare(`
+      INSERT OR REPLACE INTO readiness_study_plans (user_email, payload_json, updated_at)
+      VALUES (@user_email, @payload_json, @updated_at)
+    `)
+    .run({
+      user_email: email.toLowerCase(),
+      payload_json: JSON.stringify(payload),
+      updated_at: timestamp,
+    })
+
+  return {
+    payload,
+    updatedAt: timestamp,
   }
 }
 

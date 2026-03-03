@@ -11,7 +11,7 @@ This guide gets the project running locally with the current split Python depend
 ## 2. Go to project directory
 
 ```bash
-cd /Users/alexshienhowkhoo/Deep_Learning_Week_2026/deep-learning-week
+cd /Users/alexshienhowkhoo/Deep_Learning_Week_2026
 ```
 
 ## 3. Install Node dependencies

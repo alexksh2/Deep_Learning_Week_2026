@@ -3,6 +3,7 @@ import { randomUUID } from "crypto"
 import { appendFile, mkdir } from "fs/promises"
 import path from "path"
 import { NextResponse } from "next/server"
+import { getReadinessStudyPlan, upsertReadinessStudyPlan } from "@/lib/auth-db"
 import { resolvePythonScriptPath } from "@/lib/python-paths"
 
 const SCRIPT_PATH = resolvePythonScriptPath(
@@ -32,6 +33,12 @@ type StudyPlanAgentResponse = {
   fallbackReason?: string
   toolTrace?: ToolTraceEntry[]
   weeklyOutlook?: unknown[]
+}
+
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toLowerCase()
+  return normalized.length > 0 ? normalized : null
 }
 
 function toNumber(value: unknown, fallback: number): number {
@@ -122,8 +129,15 @@ export async function POST(request: Request) {
 
   try {
     body = await request.json()
+    const bodyRecord =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? body as Record<string, unknown>
+        : {}
+    const userEmail = normalizeEmail(bodyRecord.email)
+    const scriptRequest: Record<string, unknown> = { ...bodyRecord }
+    delete scriptRequest.email
 
-    const raw = await runStudyPlanScript(JSON.stringify(body))
+    const raw = await runStudyPlanScript(JSON.stringify(scriptRequest))
     const parsed = JSON.parse(raw) as StudyPlanAgentResponse & Record<string, unknown>
     const toolTrace = Array.isArray(parsed.toolTrace) ? parsed.toolTrace : []
 
@@ -173,7 +187,12 @@ export async function POST(request: Request) {
       console.error("[readiness_study_plan_audit]", logError)
     }
 
-    return NextResponse.json({ ...parsed, auditId, documentationPath: DOCUMENTATION_PATH })
+    const responsePayload = { ...parsed, auditId, documentationPath: DOCUMENTATION_PATH }
+    if (userEmail) {
+      upsertReadinessStudyPlan(userEmail, responsePayload)
+    }
+
+    return NextResponse.json(responsePayload)
   } catch (error) {
     const payload = {
       auditId,
@@ -190,6 +209,33 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error), auditId },
+      { status: 500 },
+    )
+  }
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const email = normalizeEmail(searchParams.get("email"))
+
+  if (!email) {
+    return NextResponse.json({ error: "Email is required." }, { status: 400 })
+  }
+
+  try {
+    const record = getReadinessStudyPlan(email)
+    if (!record) {
+      return NextResponse.json({ exists: false })
+    }
+
+    return NextResponse.json({
+      exists: true,
+      payload: record.payload,
+      updatedAt: record.updatedAt,
+    })
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
       { status: 500 },
     )
   }

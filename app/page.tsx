@@ -23,6 +23,11 @@ import type { MasteryTrend } from "@/lib/types"
 import type { StoredQuizProgress } from "@/lib/quiz-progress"
 import { useNotifications, type AppNotification, type NotificationCategory } from "@/contexts/NotificationContext"
 import { useAuth } from "@/contexts/AuthContext"
+import {
+  resolveAgentStudyPlan,
+  type AgentStudyPlanPayload,
+  type ResolvedAgentStudyPlan,
+} from "@/lib/readiness-study-plan"
 
 function TrendIcon({ trend }: { trend: MasteryTrend }) {
   if (trend === "up") return <TrendingUp className="h-3.5 w-3.5 text-chart-2" />
@@ -74,9 +79,21 @@ export default function DashboardPage() {
   const { notifications, markAsRead } = useNotifications()
   const { user } = useAuth()
   const [quizProgressById, setQuizProgressById] = useState<Record<string, StoredQuizProgress>>({})
+  const [persistedReadinessPlan, setPersistedReadinessPlan] = useState<ResolvedAgentStudyPlan | null>(null)
   const aiRecommendedPlan = useMemo(
-    () =>
-      recommendations.slice(0, 3).map((item) => {
+    () => {
+      if (persistedReadinessPlan?.items.length) {
+        return persistedReadinessPlan.items.slice(0, 3).map((item, index) => ({
+          id: `readiness-plan-${index}`,
+          title: item.focus,
+          because: `${item.task} Target: ${item.target}`,
+          estimatedMinutes: item.durationMinutes,
+          impactTag: "Readiness",
+          link: "/profile/readiness",
+        }))
+      }
+
+      return recommendations.slice(0, 3).map((item) => {
         let link = "/learn"
         if (item.type === "drill") link = "/trade/sim"
         if (item.type === "quiz" && item.linkedId) link = `/learn/quiz/${item.linkedId}`
@@ -90,8 +107,9 @@ export default function DashboardPage() {
           impactTag: item.impactTag,
           link,
         }
-      }),
-    [],
+      })
+    },
+    [persistedReadinessPlan],
   )
 
   const recentNotifications = useMemo(() => notifications.slice(0, 12), [notifications])
@@ -139,6 +157,87 @@ export default function DashboardPage() {
       active = false
     }
   }, [user?.email])
+
+  useEffect(() => {
+    let active = true
+
+    async function loadPersistedReadinessPlan() {
+      if (!user || !user.email) {
+        if (active) setPersistedReadinessPlan(null)
+        return
+      }
+      const userEmail = user.email
+      const targetRole = user.targetRole ?? "Quant Trading"
+      const hoursPerWeek = user.hoursPerWeek ?? 4
+
+      async function generateAndPersistPlan() {
+        const response = await fetch("/api/profile/readiness/study-plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: userEmail,
+            composite: 50,
+            breakdown: [
+              { key: "theory", label: "Theory Mastery", score: 50 },
+              { key: "implementation", label: "Implementation Reliability", score: 50 },
+              { key: "execution", label: "Execution Discipline", score: 50 },
+              { key: "communication", label: "Communication Clarity", score: 50 },
+            ],
+            recommendations: recommendations.slice(0, 4).map((item) => ({
+              title: item.title,
+              estimatedMinutes: item.estimatedMinutes,
+              impact: "Medium",
+              because: item.because,
+              evidenceLink: "/profile/readiness",
+            })),
+            hoursPerWeek,
+            targetRole,
+          }),
+          cache: "no-store",
+        })
+
+        if (!response.ok) return null
+        const generated = (await response.json()) as AgentStudyPlanPayload
+        return resolveAgentStudyPlan(generated)
+      }
+
+      try {
+        const res = await fetch(
+          `/api/profile/readiness/study-plan?email=${encodeURIComponent(userEmail)}`,
+          { cache: "no-store" },
+        )
+        if (!res.ok) {
+          if (active) setPersistedReadinessPlan(null)
+          return
+        }
+
+        const data = (await res.json()) as { exists?: boolean; payload?: AgentStudyPlanPayload }
+        if (!active) return
+
+        if (!data.exists || !data.payload) {
+          const generatedPlan = await generateAndPersistPlan()
+          if (active) setPersistedReadinessPlan(generatedPlan)
+          return
+        }
+
+        const resolved = resolveAgentStudyPlan(data.payload)
+        if (resolved) {
+          setPersistedReadinessPlan(resolved)
+          return
+        }
+
+        const generatedPlan = await generateAndPersistPlan()
+        if (active) setPersistedReadinessPlan(generatedPlan)
+      } catch {
+        if (active) setPersistedReadinessPlan(null)
+      }
+    }
+
+    void loadPersistedReadinessPlan()
+    return () => {
+      active = false
+    }
+  }, [user?.email, user?.hoursPerWeek, user?.targetRole])
 
   const masteryOverview = useMemo(() => {
     const skills = buildSkillMatrix({
@@ -192,15 +291,22 @@ export default function DashboardPage() {
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-medium">AI Recommended Plan</CardTitle>
-                <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground gap-1">
-                  <RefreshCw className="h-3 w-3" />
-                  Regenerate
+                <Button asChild variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground gap-1">
+                  <Link href="/profile/readiness?quickAction=run-diagnostic">
+                    <RefreshCw className="h-3 w-3" />
+                    Regenerate
+                  </Link>
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">AI Recommended</p>
+                {persistedReadinessPlan && (
+                  <p className="text-xs text-muted-foreground">
+                    Synced from your latest readiness AI plan.
+                  </p>
+                )}
                 {aiRecommendedPlan.map((item) => (
                   <Link
                     key={item.id}
