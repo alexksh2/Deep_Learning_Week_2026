@@ -31,6 +31,7 @@ type StudyPlanAgentResponse = {
   generatedAt?: string
   fallbackReason?: string
   toolTrace?: ToolTraceEntry[]
+  weeklyOutlook?: unknown[]
 }
 
 function toNumber(value: unknown, fallback: number): number {

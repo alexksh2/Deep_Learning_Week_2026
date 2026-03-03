@@ -17,6 +17,7 @@ Output JSON:
   "source": "agent" | "fallback",
   "toolTrace": [{ "step", "toolName", "arguments", "outputSummary", "status", "invokedAt" }],
   "generatedAt": "ISO8601",
+  "weeklyOutlook": [{ "week", "focus", "milestone", "estimatedMinutes" }],  // optional
   "prompt": { "system": string, "user": string }  // optional when includePrompt=true
 }
 """
@@ -35,6 +36,88 @@ try:
 except Exception:
     OpenAI = None  # type: ignore
 
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+COMPONENT_WEIGHTS: Dict[str, float] = {
+    "theory": 0.30,
+    "implementation": 0.25,
+    "execution": 0.30,
+    "communication": 0.15,
+}
+
+WEEKLY_GAIN_RATE: Dict[str, float] = {
+    "theory": 2.5,
+    "implementation": 3.0,
+    "execution": 2.0,
+    "communication": 2.5,
+}
+
+DRILL_TEMPLATES: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+    "theory": {
+        "beginner": [
+            {"template": "Read one chapter on {topic} and summarise key formulas in your own words.", "topicHint": "probability distributions", "durationHintMinutes": 30},
+            {"template": "Watch a 20-minute explainer on {topic}, then answer 10 concept-check questions.", "topicHint": "stochastic processes", "durationHintMinutes": 25},
+        ],
+        "intermediate": [
+            {"template": "Derive the {topic} formula from first principles and verify with two worked examples.", "topicHint": "Black-Scholes", "durationHintMinutes": 40},
+            {"template": "Write a one-page summary of {topic} covering intuition, assumptions, and edge cases.", "topicHint": "Ito calculus", "durationHintMinutes": 35},
+        ],
+        "advanced": [
+            {"template": "Prove {topic} rigorously and identify where each assumption is used.", "topicHint": "Girsanov theorem", "durationHintMinutes": 60},
+            {"template": "Critique three common misconceptions about {topic} and write counter-arguments.", "topicHint": "risk-neutral pricing", "durationHintMinutes": 50},
+        ],
+    },
+    "implementation": {
+        "beginner": [
+            {"template": "Implement {topic} from scratch in Python with no library help; time yourself.", "topicHint": "binary search", "durationHintMinutes": 30},
+            {"template": "Translate a pseudocode description of {topic} into working Python and test with 3 cases.", "topicHint": "moving average crossover", "durationHintMinutes": 25},
+        ],
+        "intermediate": [
+            {"template": "Implement {topic} under a 45-minute time limit, then write a post-mortem on what slowed you.", "topicHint": "LRU cache", "durationHintMinutes": 45},
+            {"template": "Refactor your {topic} implementation for O(n log n) complexity and benchmark it.", "topicHint": "order book matching", "durationHintMinutes": 40},
+        ],
+        "advanced": [
+            {"template": "Design and implement {topic} handling edge cases for production-grade use; review with a peer.", "topicHint": "tick data aggregator", "durationHintMinutes": 60},
+            {"template": "Implement {topic} with full error handling and write a spec document of design decisions.", "topicHint": "position sizing engine", "durationHintMinutes": 55},
+        ],
+    },
+    "execution": {
+        "beginner": [
+            {"template": "Run a paper-trading session focused on {topic}, logging every entry and exit decision.", "topicHint": "stop-loss discipline", "durationHintMinutes": 30},
+            {"template": "Simulate 10 trades for {topic} in a simulator and record pre-trade risk checks.", "topicHint": "position sizing", "durationHintMinutes": 25},
+        ],
+        "intermediate": [
+            {"template": "Execute a full trading session on {topic} with a hard max-loss limit; debrief afterwards.", "topicHint": "intraday momentum", "durationHintMinutes": 45},
+            {"template": "Set strict entry criteria for {topic} and review trade log for rule violations.", "topicHint": "mean reversion", "durationHintMinutes": 40},
+        ],
+        "advanced": [
+            {"template": "Trade {topic} live with a pre-defined edge case playbook; review slippage and timing.", "topicHint": "market-open volatility", "durationHintMinutes": 60},
+            {"template": "Design and execute a multi-leg {topic} strategy under simulated stress conditions.", "topicHint": "pairs trade", "durationHintMinutes": 55},
+        ],
+    },
+    "communication": {
+        "beginner": [
+            {"template": "Record a 5-minute verbal explanation of {topic} and play it back to identify unclear parts.", "topicHint": "a solved coding problem", "durationHintMinutes": 20},
+            {"template": "Write a one-paragraph ELI5 description of {topic} without jargon.", "topicHint": "delta hedging", "durationHintMinutes": 15},
+        ],
+        "intermediate": [
+            {"template": "Give a 10-minute mock whiteboard walkthrough of {topic} to a peer or recording device.", "topicHint": "an options pricing model", "durationHintMinutes": 30},
+            {"template": "Prepare and deliver a structured 5-W answer (What, Why, How, Trade-offs, Result) for {topic}.", "topicHint": "a recent trading mistake", "durationHintMinutes": 25},
+        ],
+        "advanced": [
+            {"template": "Conduct a full mock interview on {topic} with live Q&A and timed 30-second summaries.", "topicHint": "market microstructure", "durationHintMinutes": 45},
+            {"template": "Create a one-pager explaining {topic} as if presenting to a senior risk manager.", "topicHint": "Greeks exposure management", "durationHintMinutes": 40},
+        ],
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 
 def clamp(value: float, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, int(round(value))))
@@ -125,6 +208,192 @@ def fallback_task_for(component_key: str) -> str:
     return "Run one focused drill and log key mistakes with corrective actions."
 
 
+def _difficulty_level(composite: int) -> str:
+    if composite < 40:
+        return "beginner"
+    if composite < 65:
+        return "intermediate"
+    return "advanced"
+
+
+# ---------------------------------------------------------------------------
+# Tool functions
+# ---------------------------------------------------------------------------
+
+def tool_rank_gaps(payload: Dict[str, Any]) -> Dict[str, Any]:
+    _, breakdown, _, _, _ = normalized_inputs(payload)
+    ranked = sort_gaps(breakdown)
+    return {"ranked": ranked[:4]}
+
+
+def tool_build_seed_plan(payload: Dict[str, Any], top_n: int = 3) -> Dict[str, Any]:
+    """Returns context the LLM uses to write its own task descriptions."""
+    composite, breakdown, recommendations, hours_per_week, target_role = normalized_inputs(payload)
+    ranked = sort_gaps(breakdown)[: max(1, min(top_n, 4))]
+    budget = hours_per_week * 60
+
+    total_gap = sum(c["gap"] for c in ranked) or 1
+    difficulty = _difficulty_level(composite)
+
+    components_ctx = []
+    for rank_idx, component in enumerate(ranked):
+        key = component["key"]
+        gap = component["gap"]
+        weight = COMPONENT_WEIGHTS.get(key, 0.25)
+        suggested_minutes = clamp(budget * (gap / total_gap), 15, 90)
+
+        linked = next((rec for rec in recommendations if map_rec_to_component(key, rec)), None)
+        if linked and linked.get("because"):
+            evidence_ctx = linked["because"][:120]
+        else:
+            evidence_ctx = fallback_task_for(key)
+
+        components_ctx.append({
+            "rank": rank_idx + 1,
+            "key": key,
+            "label": component["label"],
+            "score": component["score"],
+            "gap": gap,
+            "weight": weight,
+            "suggestedMinutes": suggested_minutes,
+            "evidenceContext": evidence_ctx,
+        })
+
+    return {
+        "components": components_ctx,
+        "budgetMinutes": budget,
+        "hoursPerWeek": hours_per_week,
+        "targetRole": target_role,
+        "composite": composite,
+        "difficultyLevel": difficulty,
+        "instruction": (
+            "Write your own task description for each component. "
+            "Name a concrete deliverable (e.g. 'implement X', 'record Y', 'derive Z'). "
+            "Use the evidenceContext and drill templates as inspiration only — do not copy them verbatim."
+        ),
+    }
+
+
+def tool_get_drill_templates(component_key: str, difficulty: str, target_role: str) -> Dict[str, Any]:
+    """Returns 2-3 drill templates for a given component + difficulty."""
+    key = component_key.lower().strip()
+    diff = difficulty.lower().strip()
+    if diff not in ("beginner", "intermediate", "advanced"):
+        diff = "intermediate"
+
+    component_templates = DRILL_TEMPLATES.get(key, {})
+    templates = component_templates.get(diff, [])
+
+    # Fallback: try intermediate if exact difficulty not found
+    if not templates and diff != "intermediate":
+        templates = component_templates.get("intermediate", [])
+
+    return {
+        "component": key,
+        "difficulty": diff,
+        "targetRole": target_role,
+        "templates": templates,
+    }
+
+
+def tool_score_plan(payload: Dict[str, Any], sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Validates a draft session list against budget and coverage."""
+    _, breakdown, _, hours_per_week, _ = normalized_inputs(payload)
+    budget_minutes = hours_per_week * 60
+
+    if not isinstance(sessions, list):
+        return {"score": 0, "budgetOk": False, "usedMinutes": 0, "budgetMinutes": budget_minutes,
+                "coverageRatio": 0.0, "sessionCount": 0, "issues": ["sessions must be a list"]}
+
+    issues: List[str] = []
+    used_minutes = 0
+    for s in sessions:
+        if isinstance(s, dict):
+            used_minutes += clamp(float(s.get("durationMinutes", 0)), 0, 600)
+
+    session_count = len(sessions)
+
+    # Budget compliance: used ≤ budget * 1.1
+    budget_ok = used_minutes <= budget_minutes * 1.1
+    if not budget_ok:
+        issues.append(f"Used {used_minutes}m exceeds budget {budget_minutes}m by more than 10%.")
+
+    # Session count 1-6
+    if not (1 <= session_count <= 6):
+        issues.append(f"Session count {session_count} is outside 1-6 range.")
+
+    # Coverage: fraction of breakdown components with at least one session targeting them
+    breakdown_keys = {c["key"] for c in breakdown}
+    covered_keys: set = set()
+    for s in sessions:
+        if not isinstance(s, dict):
+            continue
+        focus = str(s.get("focus", "")).lower()
+        task = str(s.get("task", "")).lower()
+        combined = focus + " " + task
+        for bk in breakdown_keys:
+            if bk in combined:
+                covered_keys.add(bk)
+    coverage_ratio = len(covered_keys) / max(1, len(breakdown_keys))
+    if coverage_ratio < 0.5:
+        issues.append(f"Coverage ratio {coverage_ratio:.2f} — fewer than half of components are addressed.")
+
+    # Score: start at 100, subtract penalties
+    score = 100
+    if not budget_ok:
+        score -= 25
+    if session_count < 1 or session_count > 6:
+        score -= 20
+    if coverage_ratio < 0.5:
+        score -= 20
+    elif coverage_ratio < 0.75:
+        score -= 10
+    score = clamp(score, 0, 100)
+
+    return {
+        "score": score,
+        "budgetOk": budget_ok,
+        "usedMinutes": used_minutes,
+        "budgetMinutes": budget_minutes,
+        "coverageRatio": round(coverage_ratio, 2),
+        "sessionCount": session_count,
+        "issues": issues,
+    }
+
+
+def tool_estimate_weeks_to_target(
+    component_key: str,
+    current_score: float,
+    target_score: float,
+    hours_per_week: float,
+) -> Dict[str, Any]:
+    """Estimates weeks needed to reach target score for a component."""
+    key = component_key.lower().strip()
+    base_rate = WEEKLY_GAIN_RATE.get(key, 2.5)  # points per week at 4h baseline
+
+    # Scale by hours; cap multiplier at 1.5x
+    scale = min(hours_per_week / 4.0, 1.5)
+    effective_rate = base_rate * scale
+
+    gap = max(0.0, float(target_score) - float(current_score))
+    weeks_estimate = gap / effective_rate if effective_rate > 0 else 999
+
+    return {
+        "componentKey": key,
+        "currentScore": float(current_score),
+        "targetScore": float(target_score),
+        "gap": round(gap, 1),
+        "weeksEstimate": round(weeks_estimate, 1),
+        "hoursPerWeekAssumed": float(hours_per_week),
+        "weeklyGainRateAssumed": round(effective_rate, 2),
+        "note": f"At {hours_per_week:.1f}h/week the effective gain rate is {effective_rate:.2f} pts/week.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fallback
+# ---------------------------------------------------------------------------
+
 def deterministic_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
     composite, breakdown, recommendations, hours_per_week, _target_role = normalized_inputs(payload)
     ranked = sort_gaps(breakdown)
@@ -170,32 +439,9 @@ def deterministic_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def tool_rank_gaps(payload: Dict[str, Any]) -> Dict[str, Any]:
-    _, breakdown, _, _, _ = normalized_inputs(payload)
-    ranked = sort_gaps(breakdown)
-    return {"ranked": ranked[:4]}
-
-
-def tool_build_seed_plan(payload: Dict[str, Any], top_n: int = 3) -> Dict[str, Any]:
-    _, breakdown, recommendations, hours_per_week, _ = normalized_inputs(payload)
-    ranked = sort_gaps(breakdown)[: max(1, min(top_n, 4))]
-    budget = hours_per_week * 60
-    per_session = max(20, int(round(budget / (len(ranked) + 1))))
-
-    sessions = []
-    for idx, component in enumerate(ranked):
-        linked = next((rec for rec in recommendations if map_rec_to_component(component["key"], rec)), None)
-        sessions.append(
-            {
-                "session": f"Session {idx + 1}",
-                "focus": component["label"],
-                "task": linked["title"] if linked and linked.get("title") else fallback_task_for(component["key"]),
-                "durationMinutes": clamp(linked["estimatedMinutes"] if linked else per_session, 15, 90),
-                "target": f"Reduce {component['label']} gap by at least 8 points.",
-            }
-        )
-    return {"sessions": sessions, "budgetMinutes": budget}
-
+# ---------------------------------------------------------------------------
+# Summarize tool results
+# ---------------------------------------------------------------------------
 
 def summarize_tool_result(tool_name: str, tool_result: Dict[str, Any]) -> str:
     if tool_name == "rank_readiness_gaps":
@@ -207,19 +453,109 @@ def summarize_tool_result(tool_name: str, tool_result: Dict[str, Any]) -> str:
             return f"Ranked {len(ranked)} components. Top gap: {label} ({gap} points)."
         return "Ranked readiness gaps."
     if tool_name == "build_seed_plan":
-        sessions = tool_result.get("sessions", [])
+        components = tool_result.get("components", [])
         budget = tool_result.get("budgetMinutes", "?")
-        count = len(sessions) if isinstance(sessions, list) else 0
-        return f"Built seed plan with {count} sessions and {budget} minute budget."
+        difficulty = tool_result.get("difficultyLevel", "?")
+        count = len(components) if isinstance(components, list) else 0
+        return f"Built seed plan context for {count} components, {budget}m budget, difficulty={difficulty}."
+    if tool_name == "get_drill_templates":
+        templates = tool_result.get("templates", [])
+        component = tool_result.get("component", "?")
+        difficulty = tool_result.get("difficulty", "?")
+        count = len(templates) if isinstance(templates, list) else 0
+        return f"Retrieved {count} drill templates for {component} at {difficulty} level."
+    if tool_name == "score_plan":
+        score = tool_result.get("score", "?")
+        budget_ok = tool_result.get("budgetOk", "?")
+        coverage = tool_result.get("coverageRatio", "?")
+        issues = tool_result.get("issues", [])
+        issue_str = f" Issues: {'; '.join(issues)}" if issues else ""
+        return f"Plan score: {score}/100. BudgetOk={budget_ok}, Coverage={coverage}.{issue_str}"
+    if tool_name == "estimate_weeks_to_target":
+        key = tool_result.get("componentKey", "?")
+        weeks = tool_result.get("weeksEstimate", "?")
+        gap = tool_result.get("gap", "?")
+        return f"Estimated {weeks} weeks to close {gap}-point gap in {key}."
     if "error" in tool_result:
         return f"Tool error: {tool_result.get('error')}"
     return "Tool executed."
 
 
+# ---------------------------------------------------------------------------
+# Build prompts
+# ---------------------------------------------------------------------------
+
+def build_prompts(payload: Dict[str, Any]) -> Dict[str, str]:
+    composite, breakdown, _, hours_per_week, target_role = normalized_inputs(payload)
+    difficulty = _difficulty_level(composite)
+    budget_minutes = hours_per_week * 60
+
+    system_prompt = (
+        "You are an agentic quant-learning coach. You MUST call tools in this exact order before writing your final response:\n"
+        "1. Call rank_readiness_gaps to identify the weakest components.\n"
+        "2. For each weak component (up to 3), call get_drill_templates(component_key, difficulty) to fetch inspiration.\n"
+        "3. Call build_seed_plan(top_n=3) to get context, budget, and difficulty level.\n"
+        "4. For each weak component, call estimate_weeks_to_target(component_key, current_score, target_score=75) to project timelines.\n"
+        "5. Draft your plan, then call score_plan(sessions) to validate it. If score < 70, revise once.\n\n"
+        "Task-writing rules:\n"
+        "- Write EVERY task description yourself. Do NOT copy recommendation titles or template strings verbatim.\n"
+        "- Name a concrete deliverable: what the learner will produce, implement, record, or prove.\n"
+        "- Use drill templates as structural inspiration only; personalise to the learner's target role and score.\n"
+        "- Keep task text under 120 characters.\n\n"
+        "Output compact JSON only. No markdown. No prose outside the JSON object."
+    )
+
+    user_prompt = json.dumps(
+        {
+            "learnerProfile": {
+                "targetRole": target_role,
+                "hoursPerWeek": hours_per_week,
+                "weeklyBudgetMinutes": budget_minutes,
+                "difficultyLevel": difficulty,
+                "compositeScore": composite,
+            },
+            "objective": "Generate a personalised AI readiness study plan",
+            "constraints": {
+                "maxSessions": 6,
+                "minSessionMinutes": 15,
+                "maxSessionMinutes": 90,
+                "budgetMinutes": budget_minutes,
+            },
+            "input": payload,
+            "outputSchema": {
+                "plan": [
+                    {
+                        "session": "Session 1",
+                        "focus": "Execution Discipline",
+                        "task": "Your own LLM-authored task description — concrete deliverable",
+                        "durationMinutes": 30,
+                        "target": "Measurable target",
+                    }
+                ],
+                "rationale": "Short rationale referencing tool findings",
+                "weeklyOutlook": [
+                    {
+                        "week": 1,
+                        "focus": "Theme for the week",
+                        "milestone": "Specific measurable milestone",
+                        "estimatedMinutes": budget_minutes,
+                    }
+                ],
+            },
+        }
+    )
+    return {"system": system_prompt, "user": user_prompt}
+
+
+# ---------------------------------------------------------------------------
+# Output sanitization
+# ---------------------------------------------------------------------------
+
 def sanitize_agent_output(
     candidate: Dict[str, Any],
     fallback: Dict[str, Any],
     tool_trace: List[Dict[str, Any]],
+    payload: Dict[str, Any],
 ) -> Dict[str, Any]:
     plan_in = candidate.get("plan")
     if not isinstance(plan_in, list) or len(plan_in) == 0:
@@ -261,7 +597,7 @@ def sanitize_agent_output(
     if not rationale:
         rationale = "Plan generated by agent after ranking readiness gaps and mapping evidence-backed drills."
 
-    return {
+    result: Dict[str, Any] = {
         "plan": cleaned,
         "weeklyMinutes": weekly_minutes,
         "rationale": rationale,
@@ -270,37 +606,40 @@ def sanitize_agent_output(
         "generatedAt": utc_now_iso(),
     }
 
+    # Parse optional weeklyOutlook (max 8 entries)
+    _, _, _, hours_per_week, _ = normalized_inputs(payload)
+    fallback_minutes = hours_per_week * 60
+    raw_outlook = candidate.get("weeklyOutlook")
+    if isinstance(raw_outlook, list) and len(raw_outlook) > 0:
+        outlook: List[Dict[str, Any]] = []
+        for entry in raw_outlook[:8]:
+            if not isinstance(entry, dict):
+                continue
+            week = entry.get("week")
+            focus = str(entry.get("focus", "")).strip()
+            milestone = str(entry.get("milestone", "")).strip()
+            if not focus or not milestone:
+                continue
+            raw_minutes = entry.get("estimatedMinutes", fallback_minutes)
+            try:
+                minutes_val = clamp(float(raw_minutes), 15, 600)
+            except (TypeError, ValueError):
+                minutes_val = clamp(fallback_minutes, 15, 600)
+            outlook.append({
+                "week": int(week) if isinstance(week, (int, float)) else len(outlook) + 1,
+                "focus": focus,
+                "milestone": milestone,
+                "estimatedMinutes": minutes_val,
+            })
+        if outlook:
+            result["weeklyOutlook"] = outlook
 
-def build_prompts(payload: Dict[str, Any]) -> Dict[str, str]:
-    system_prompt = (
-        "You are an agentic quant-learning coach. Use tools first, then return compact JSON only. "
-        "No markdown. Build a practical weekly plan with clear targets from weakest readiness components."
-    )
-    user_prompt = json.dumps(
-        {
-            "objective": "Generate AI readiness study plan",
-            "constraints": {
-                "maxSessions": 6,
-                "minSessionMinutes": 15,
-                "maxSessionMinutes": 90,
-            },
-            "input": payload,
-            "outputSchema": {
-                "plan": [
-                    {
-                        "session": "Session 1",
-                        "focus": "Execution Discipline",
-                        "task": "Specific task",
-                        "durationMinutes": 30,
-                        "target": "Measurable target",
-                    }
-                ],
-                "rationale": "Short rationale",
-            },
-        }
-    )
-    return {"system": system_prompt, "user": user_prompt}
+    return result
 
+
+# ---------------------------------------------------------------------------
+# Agent loop
+# ---------------------------------------------------------------------------
 
 def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
     fallback = deterministic_plan(payload)
@@ -311,6 +650,9 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
     client = OpenAI(api_key=api_key)
     model = os.getenv("OPENAI_MODEL_READINESS_AGENT", os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
     tool_trace: List[Dict[str, Any]] = []
+
+    # Pre-loop extraction so dispatchers can access shared context
+    composite, breakdown, recommendations, hours_per_week, target_role = normalized_inputs(payload)
 
     tools = [
         {
@@ -329,13 +671,85 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
             "type": "function",
             "function": {
                 "name": "build_seed_plan",
-                "description": "Builds a deterministic seed plan from weakest components and recommended actions.",
+                "description": (
+                    "Returns context (components, budget, difficulty) the LLM uses to write its own task descriptions. "
+                    "Does NOT return pre-written tasks."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "top_n": {"type": "integer", "minimum": 1, "maximum": 4},
                     },
                     "required": ["top_n"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_drill_templates",
+                "description": "Returns 2-3 drill template strings for a given readiness component and difficulty level.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "component_key": {
+                            "type": "string",
+                            "enum": ["theory", "implementation", "execution", "communication"],
+                        },
+                        "difficulty": {
+                            "type": "string",
+                            "enum": ["beginner", "intermediate", "advanced"],
+                        },
+                    },
+                    "required": ["component_key", "difficulty"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "score_plan",
+                "description": "Validates a draft plan for budget compliance and coverage. Returns score 0-100.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sessions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "session": {"type": "string"},
+                                    "focus": {"type": "string"},
+                                    "task": {"type": "string"},
+                                    "durationMinutes": {"type": "number"},
+                                    "target": {"type": "string"},
+                                },
+                            },
+                        }
+                    },
+                    "required": ["sessions"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "estimate_weeks_to_target",
+                "description": "Estimates how many weeks to close a score gap for a component at the learner's hours/week.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "component_key": {
+                            "type": "string",
+                            "enum": ["theory", "implementation", "execution", "communication"],
+                        },
+                        "current_score": {"type": "number"},
+                        "target_score": {"type": "number"},
+                    },
+                    "required": ["component_key", "current_score", "target_score"],
                     "additionalProperties": False,
                 },
             },
@@ -351,7 +765,7 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
         {"role": "user", "content": user_prompt},
     ]
 
-    for _ in range(6):
+    for _ in range(12):
         response = client.chat.completions.create(
             model=model,
             temperature=0.2,
@@ -405,6 +819,35 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
                     except Exception as tool_error:
                         tool_result = {"error": str(tool_error)}
                         status = "error"
+                elif tool_name == "get_drill_templates":
+                    try:
+                        component_key = str(parsed_args.get("component_key", "theory"))
+                        difficulty = str(parsed_args.get("difficulty", "intermediate"))
+                        tool_result = tool_get_drill_templates(component_key, difficulty, target_role)
+                        status = "ok"
+                    except Exception as tool_error:
+                        tool_result = {"error": str(tool_error)}
+                        status = "error"
+                elif tool_name == "score_plan":
+                    try:
+                        sessions_arg = parsed_args.get("sessions", [])
+                        tool_result = tool_score_plan(payload, sessions_arg)
+                        status = "ok"
+                    except Exception as tool_error:
+                        tool_result = {"error": str(tool_error)}
+                        status = "error"
+                elif tool_name == "estimate_weeks_to_target":
+                    try:
+                        component_key = str(parsed_args.get("component_key", "theory"))
+                        current_score = float(parsed_args.get("current_score", 50))
+                        target_score = float(parsed_args.get("target_score", 75))
+                        tool_result = tool_estimate_weeks_to_target(
+                            component_key, current_score, target_score, hours_per_week
+                        )
+                        status = "ok"
+                    except Exception as tool_error:
+                        tool_result = {"error": str(tool_error)}
+                        status = "error"
                 else:
                     tool_result = {"error": f"Unknown tool: {tool_name}"}
                     status = "error"
@@ -444,7 +887,7 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "toolTrace": tool_trace,
                 "fallbackReason": "Agent returned non-object JSON.",
             }
-        return sanitize_agent_output(parsed, fallback, tool_trace)
+        return sanitize_agent_output(parsed, fallback, tool_trace, payload)
 
     return {
         **fallback,
@@ -452,6 +895,10 @@ def run_agent(payload: Dict[str, Any]) -> Dict[str, Any]:
         "fallbackReason": "Agent loop reached max iterations without final response.",
     }
 
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def read_payload_from_sources(args: argparse.Namespace) -> str:
     if args.payload:

@@ -109,6 +109,13 @@ interface AgentToolTraceEntry {
   invokedAt?: string
 }
 
+interface WeeklyOutlookEntry {
+  week: number
+  focus: string
+  milestone: string
+  estimatedMinutes: number
+}
+
 interface AgentStudyPlanPayload {
   plan?: Array<{
     session?: string
@@ -125,6 +132,7 @@ interface AgentStudyPlanPayload {
   toolTrace?: AgentToolTraceEntry[]
   auditId?: string
   documentationPath?: string
+  weeklyOutlook?: WeeklyOutlookEntry[]
   prompt?: {
     system?: string
     user?: string
@@ -141,6 +149,7 @@ interface ResolvedAgentStudyPlan {
   toolTrace: AgentToolTraceEntry[]
   auditId?: string
   documentationPath?: string
+  weeklyOutlook?: WeeklyOutlookEntry[]
 }
 
 interface StudyPlanPrompt {
@@ -221,6 +230,16 @@ function resolveAgentStudyPlan(payload: AgentStudyPlanPayload): ResolvedAgentStu
       }))
     : []
 
+  const weeklyOutlook: WeeklyOutlookEntry[] | undefined = Array.isArray(payload.weeklyOutlook)
+    ? payload.weeklyOutlook
+        .filter((e): e is WeeklyOutlookEntry =>
+          Boolean(e) &&
+          typeof e === "object" &&
+          typeof e.focus === "string" &&
+          typeof e.milestone === "string",
+        )
+    : undefined
+
   return {
     items,
     weeklyMinutes,
@@ -231,6 +250,7 @@ function resolveAgentStudyPlan(payload: AgentStudyPlanPayload): ResolvedAgentStu
     toolTrace,
     auditId: typeof payload.auditId === "string" ? payload.auditId : undefined,
     documentationPath: typeof payload.documentationPath === "string" ? payload.documentationPath : undefined,
+    weeklyOutlook: weeklyOutlook && weeklyOutlook.length > 0 ? weeklyOutlook : undefined,
   }
 }
 
@@ -592,9 +612,9 @@ export function ReadinessTab() {
       because: rec.because,
       evidenceLink: rec.evidenceLink,
     })),
-    hoursPerWeek: 4,
-    targetRole: "Quant Trading",
-  }), [computed.breakdown, computed.composite, computed.recommendations])
+    hoursPerWeek: user?.hoursPerWeek ?? 4,
+    targetRole: user?.targetRole ?? "Quant Trading",
+  }), [computed.breakdown, computed.composite, computed.recommendations, user?.hoursPerWeek, user?.targetRole])
 
   const fetchAgentStudyPlan = useCallback(async (includePrompt = false) => {
     const response = await fetch("/api/profile/readiness/study-plan", {
