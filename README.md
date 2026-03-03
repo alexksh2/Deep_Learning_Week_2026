@@ -397,7 +397,7 @@ Prerequisites:
 Setup:
 
 ```bash
-cd /Users/alexshienhowkhoo/Deep_Learning_Week_2026/deep-learning-week
+cd /Users/alexshienhowkhoo/Deep_Learning_Week_2026
 npm install
 python3 -m venv .venv
 source .venv/bin/activate
