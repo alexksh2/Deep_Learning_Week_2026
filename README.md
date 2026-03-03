@@ -66,7 +66,7 @@ The stack is deliberate: Next.js API routes orchestrate Python subprocesses on-d
 
 **Technical choices and why:**
 - **Python via `child_process.spawn`** — keeps the deployment surface minimal while allowing full access to PyTorch, FAISS, scikit-learn, and OpenAI function-calling within the same repo. (→ [§7 Technical Implementation](#7-technical-implementation))
-- **OpenAI function-calling agent with deterministic fallback** — the study planner runs a real tool-use loop (`rank_readiness_gaps` → `build_seed_plan`), but if the API call fails or returns malformed JSON, a pure-Python fallback executes the same logic. Students always receive a usable plan. (→ [Innovation 3](#innovation-3-agentic-study-planning-with-full-audit-trail))
+- **OpenAI function-calling agent with deterministic fallback** — the study planner runs a structured 5-step tool workflow (`rank_readiness_gaps` → `get_drill_templates` → `build_seed_plan` → `estimate_weeks_to_target` → `score_plan`). The LLM writes every task description itself; `hoursPerWeek` and `targetRole` are read directly from the user's profile. If the API call fails or returns malformed JSON, a pure-Python fallback executes the same gap-ranking logic. Students always receive a usable plan. (→ [Innovation 3](#innovation-3-agentic-study-planning-with-full-audit-trail))
 - **FAISS RAG with LLM-as-a-Judge** — coaching answers are grounded in uploaded documents; each factual claim is evaluated as `supported`/`partial`/`unsupported`/`uncited` before display. (→ [Innovation 5](#innovation-5-citation-grounded-coaching-with-claim-evaluation))
 - **Append-only NDJSON audit log** — every study plan generation is recorded unconditionally, including failures. The log is never overwritten, enabling offline audit and bias review. (→ [§5 Responsible AI](#5-responsible-ai--first-class-not-an-afterthought))
 - **SQLite for all learning state** — quiz progress (including partial in-session state), interview history, resume analyses, and conversation history all persist across sessions with no additional infrastructure.
@@ -852,7 +852,7 @@ BEFORE=$(wc -l < data/responsible-ai/study-plan-tool-audit.ndjson)
 # Run TC-04 again
 curl -X POST http://localhost:3000/api/profile/readiness/study-plan \
   -H "Content-Type: application/json" \
-  -d '{"composite":60,"breakdown":[{"key":"Theory","score":50,"label":"Theory"}],"recommendations":[],"hoursPerWeek":5,"targetRole":"QR"}'
+  -d '{"composite":60,"breakdown":[{"key":"theory","score":50,"label":"Theory Mastery"}],"recommendations":[],"hoursPerWeek":5,"targetRole":"Quant Research"}'
 
 AFTER=$(wc -l < data/responsible-ai/study-plan-tool-audit.ndjson)
 
