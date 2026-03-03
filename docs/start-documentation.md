@@ -9,6 +9,10 @@ This guide gets the project running locally with the current split Python depend
 - Ollama installed (for local LLM features)
 
 ## 2. Go to project directory
+```bash
+ git clone                   
+   https://github.com/alexksh2/Deep_Learning_Week_2026.git
+```
 
 ```bash
 cd /Users/alexshienhowkhoo/Deep_Learning_Week_2026
