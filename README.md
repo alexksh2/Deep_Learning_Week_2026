@@ -535,7 +535,7 @@ This means the full application runs with `npm run dev`. No uvicorn, no port man
 
 ## 8. Test Cases and Verification
 
-All tests assume app running at `http://localhost:3000`. Demo credentials: `alexkhoo@gmail.com` / `demo1234`.
+All tests assume the app is running at `http://localhost:3000`. Log in with demo credentials: `alexkhoo@gmail.com` / `demo1234`.
 
 ---
 
@@ -543,23 +543,13 @@ All tests assume app running at `http://localhost:3000`. Demo credentials: `alex
 
 **Tests:** Graceful degradation when Alpaca is unconfigured (non-linear learning: inactivity case).
 
-```bash
-curl http://localhost:3000/api/alpaca/behavioral
-```
+1. Navigate to the **Dashboard** (`/`)
+2. Find the **Trading Execution** section of the readiness breakdown
+3. Look for all four behavioral signals (Fat-Finger Risk, Revenge Trade Risk, Stop-Loss Discipline, Slippage Sensitivity)
 
-**Expected:**
-```json
-{
-  "fatFingerRisk": 0, "fatFingerTrend": "flat",
-  "revengeTradeRisk": 0, "revengeTradeTrend": "flat",
-  "stopLossDiscipline": 0, "stopLossTrend": "flat",
-  "slippageSensitivity": 0, "slippageTrend": "flat",
-  "riskDiscipline": 0, "executionQuality": 0, "composite": 0,
-  "explanation": "No order history yet."
-}
-```
+**What to look for:** All four signals show `0` with `flat` trend indicators. The explanation reads `"No order history yet."` The overall composite still renders — no error, no blank panel. The app degrades gracefully when trading data is absent.
 
-**Pass criteria:** Valid schema, no errors. System never breaks when data is absent.
+**Pass criteria:** Dashboard loads without errors. Execution component displays a neutral state rather than breaking.
 
 ---
 
@@ -567,20 +557,12 @@ curl http://localhost:3000/api/alpaca/behavioral
 
 **Tests:** Problem question 4 — identifying a specific, repeating bad pattern.
 
-From the source code (`behavioral/route.ts:50–67`), given this order set:
-```
-orders: qty=[1, 1, 1, 1, 10]
-→ medianQty = 1
-→ flagged orders (qty > 2): 1 (the qty=10 order)
-→ fatFingerRisk = (1/5) × 200 = 40
-```
+1. Navigate to the **Dashboard** (`/`) with an Alpaca account that has order history including an outsized order (e.g., one order 5–10× the typical quantity)
+2. Open the **Trading Execution** breakdown panel
 
-**Expected fields in response:**
-```json
-{ "fatFingerRisk": 40, "explanation": "Composite reflects: oversized order events detected." }
-```
+**What to look for:** The Fat-Finger Risk score is non-zero and proportional to the fraction of oversized orders. The explanation text explicitly names the pattern: `"oversized order events detected."` The score uses the formula: `(flagged orders / total orders) × 200`, capped at 100.
 
-**Pass criteria:** Risk score is mathematically correct. Explanation text names the pattern.
+**Pass criteria:** Risk score is mathematically correct relative to order history. Explanation text names the specific pattern rather than giving a generic message.
 
 ---
 
@@ -588,12 +570,12 @@ orders: qty=[1, 1, 1, 1, 10]
 
 **Tests:** Discipline tracking across active trading days.
 
-Given: 5 active trading days, stop orders placed on 2 of them.
-```
-stopLossDiscipline = (2/5) × 100 = 40
-```
+1. Navigate to the **Dashboard** (`/`) with an Alpaca account that has at least 5 active trading days
+2. Open the **Trading Execution** breakdown panel
 
-**Expected:** `stopLossDiscipline: 40`. Score below 50 triggers `"inconsistent stop placement"` in explanation.
+**What to look for:** Stop-Loss Discipline score reflects the ratio of days with stop orders placed to total active trading days (`(days with stops / total active days) × 100`). If the score is below 50, the explanation reads `"inconsistent stop placement"`.
+
+**Pass criteria:** Score matches the expected ratio. Explanation text changes based on whether the score crosses the 50-point threshold.
 
 ---
 
@@ -601,64 +583,21 @@ stopLossDiscipline = (2/5) × 100 = 40
 
 **Tests:** Agentic planning runs all 5 tools in order; LLM writes its own tasks; audit trail is written; `weeklyOutlook` is present.
 
-```bash
-curl -X POST http://localhost:3000/api/profile/readiness/study-plan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "composite": 58,
-    "breakdown": [
-      {"key": "theory",         "score": 45, "label": "Theory Mastery"},
-      {"key": "implementation", "score": 55, "label": "Implementation Reliability"},
-      {"key": "execution",      "score": 62, "label": "Execution Discipline"},
-      {"key": "communication",  "score": 70, "label": "Communication Clarity"}
-    ],
-    "recommendations": [
-      {"title": "Review stochastic calculus", "estimatedMinutes": 30, "impact": "High", "because": "Theory score below threshold for quant roles", "evidenceLink": "/resume"},
-      {"title": "Practice derivation problems", "estimatedMinutes": 25, "impact": "Medium", "because": "Interview scores show gaps in derivation speed", "evidenceLink": "/interview"}
-    ],
-    "hoursPerWeek": 10,
-    "targetRole": "Quant Research"
-  }'
-```
+1. Navigate to **Profile** (`/profile`) → **Readiness** tab
+2. Review the readiness breakdown — confirm at least one component is below 60
+3. Click **Generate Study Plan**
+4. Wait for the plan to load (the agent calls 5 tools sequentially — this takes a few seconds)
 
-**Expected response shape:**
-```json
-{
-  "source": "agent",
-  "weeklyMinutes": 600,
-  "plan": [
-    {
-      "session": "Session 1",
-      "focus": "Theory Mastery",
-      "task": "Derive the Black-Scholes PDE from first principles and verify with two numerical examples",
-      "durationMinutes": 90,
-      "target": "Reduce Theory Mastery gap by at least 8 points"
-    }
-  ],
-  "rationale": "Theory (45/100) is the priority gap...",
-  "weeklyOutlook": [
-    {"week": 1, "focus": "Theory fundamentals", "milestone": "Complete Black-Scholes derivation drill", "estimatedMinutes": 600},
-    {"week": 2, "focus": "Implementation speed", "milestone": "Code order-book matcher in <45 min", "estimatedMinutes": 600}
-  ],
-  "toolTrace": [
-    {"step": 1, "toolName": "rank_readiness_gaps",     "status": "ok"},
-    {"step": 2, "toolName": "get_drill_templates",      "status": "ok"},
-    {"step": 3, "toolName": "build_seed_plan",          "status": "ok"},
-    {"step": 4, "toolName": "estimate_weeks_to_target", "status": "ok"},
-    {"step": 5, "toolName": "score_plan",               "status": "ok"}
-  ],
-  "auditId": "<uuid>",
-  "documentationPath": "docs/responsible-ai-study-plan-tool-logging.md"
-}
-```
+**What to look for:**
+- A multi-session plan where each session has a specific `focus`, `task`, and `durationMinutes`
+- Task descriptions are written in the LLM's own words — not copied from the recommendation titles shown on screen
+- A **Weekly Outlook** section showing 2–4 week projections with milestones
+- A **Tool Trace** section (or expandable panel) showing 5 steps in order: `rank_readiness_gaps` → `get_drill_templates` → `build_seed_plan` → `estimate_weeks_to_target` → `score_plan`, each with `"status": "ok"`
+- An `auditId` field containing a UUID
 
-**Audit log verification:**
-```bash
-tail -n 1 data/responsible-ai/study-plan-tool-audit.ndjson | python3 -m json.tool
-# Must contain: "status": "ok", "toolCount": 5, "source": "agent"
-```
+**Audit log:** Open `data/responsible-ai/study-plan-tool-audit.ndjson` in any text editor. The last line should be a new JSON record containing `"status": "ok"`, `"toolCount": 5`, and `"source": "agent"`.
 
-**Pass criteria:** `toolTrace` has 5 entries in order. Task text is LLM-authored (not a copied recommendation title). `weeklyOutlook` array is present. Audit file gains exactly 1 line. `auditId` is a valid UUID.
+**Pass criteria:** Tool trace has exactly 5 entries in the correct order. Weekly outlook is present. Audit file has gained exactly one new line. `auditId` is a valid UUID.
 
 ---
 
@@ -666,27 +605,19 @@ tail -n 1 data/responsible-ai/study-plan-tool-audit.ndjson | python3 -m json.too
 
 **Tests:** Responsible AI requirement — system functions without LLM.
 
-**Setup:** Remove or blank `OPENAI_API_KEY` in `.env.local`. Repeat TC-04.
+1. Open `.env.local` and remove or blank the `OPENAI_API_KEY` value
+2. Restart the app (`npm run dev`)
+3. Navigate to **Profile** → **Readiness** tab and click **Generate Study Plan**
 
-**Expected response:**
-```json
-{
-  "source": "fallback",
-  "weeklyMinutes": 600,
-  "plan": [...],
-  "rationale": "...",
-  "toolTrace": [],
-  "fallbackReason": "OPENAI_API_KEY not set or agent encountered an error",
-  "auditId": "<uuid>"
-}
-```
+**What to look for:**
+- A study plan is still returned — no error page, no spinner that never resolves
+- The plan source is marked `"fallback"` (visible in the response or a UI label)
+- A `fallbackReason` field reads `"OPENAI_API_KEY not set or agent encountered an error"`
+- The tool trace is empty (`[]`) — the fallback runs pure Python, not the agent
 
-**Audit log entry:**
-```json
-{ "status": "ok", "responseSummary": { "source": "fallback", "toolCount": 0 } }
-```
+**Audit log:** The new line in `data/responsible-ai/study-plan-tool-audit.ndjson` records `"source": "fallback"` and `"status": "ok"` — the fallback is logged, not silently swallowed.
 
-**Pass criteria:** Plan is returned (not an error). `source` is `"fallback"`. Audit log records the fallback with `"status": "ok"`. Student experience is uninterrupted.
+**Pass criteria:** A usable plan is returned even with no API key. Student experience is uninterrupted. Fallback is audited identically to the agent path.
 
 ---
 
@@ -694,40 +625,27 @@ tail -n 1 data/responsible-ai/study-plan-tool-audit.ndjson | python3 -m json.too
 
 **Tests:** Router correctly distinguishes simple vs. complex queries.
 
-**Direct Python test:**
-```bash
-cd router
+1. Navigate to **Coaching** (`/coaching`)
+2. Make sure the model selector is set to **Auto** (uses the DistilBERT router)
+3. Send a simple query: `"What is a Sharpe ratio?"`
+4. Open browser DevTools → **Network** tab → find the `/api/chat` request → inspect the response headers
 
-python router.py "What is a Sharpe ratio?"
-# Expected:
-# Label:   simple  (confidence: >0.70)
-# Model:   gpt-4o-mini
+**What to look for (simple query):**
+- Response header `x-router-label: simple`
+- Response header `x-router-confidence: 0.9x` (above 0.70)
 
-python router.py "Derive the Black-Scholes PDE from first principles using Ito's lemma and no-arbitrage"
-# Expected:
-# Label:   complex (confidence: >0.70)
-# Model:   gpt-4o
-```
+5. Now send a complex query: `"Derive the Black-Scholes PDE from first principles using Ito's lemma and no-arbitrage"`
 
-**API integration test:**
-```bash
-curl -si -X POST http://localhost:3000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"What is a Sharpe ratio?"}],"model":"auto"}' \
-  | grep -i "x-router"
+**What to look for (complex query):**
+- Response header `x-router-label: complex`
+- Confidence above 0.70
 
-# Expected headers:
-# x-router-label: simple
-# x-router-confidence: 0.9x
-```
+6. Send an ambiguous query: `"Derive hmm"`
 
-**Below-threshold test:**
-```bash
-python router.py "Derive hmm"
-# Confidence < 0.70 → falls back to "medium", never routes to "complex"
-```
+**What to look for (below-threshold):**
+- Confidence below 0.70 → router defaults to `medium`, never routes to `complex`
 
-**Pass criteria:** Simple queries route to gpt-4o-mini. Complex queries route to gpt-4o. Low-confidence queries default to medium.
+**Pass criteria:** Simple queries route to the lighter model. Complex queries route to the stronger model. Ambiguous queries default to the safe middle tier rather than mis-routing.
 
 ---
 
@@ -735,29 +653,14 @@ python router.py "Derive hmm"
 
 **Tests:** Problem question 4 — in-progress state survives page close.
 
-1. Navigate to `/learn` and start any quiz
-2. Answer 3 questions, annotate confidence and mistake type on at least one wrong answer
-3. Close the browser tab without completing the quiz
+1. Navigate to **Learn** (`/learn`) and open any quiz
+2. Answer 3 questions — on any wrong answer, select a confidence level and a mistake type (`Conceptual`, `Careless`, or `Implementation`) before advancing
+3. Close the browser tab entirely (do not click Submit or Finish)
 4. Reopen the same quiz URL
-5. **Expected:** Quiz resumes at question 4 with previous answers pre-filled
 
-**API-level verification:**
-```bash
-# After answering questions, inspect network tab in browser devtools
-# POST /api/learn/quiz-progress should show:
-{
-  "quizId": "<id>",
-  "userId": "<id>",
-  "answers": [
-    {"questionId": "q1", "isCorrect": true,  "confidence": "High"},
-    {"questionId": "q2", "isCorrect": false, "mistakeType": "Conceptual", "confidence": "Med"},
-    {"questionId": "q3", "isCorrect": true,  "confidence": "Low"}
-  ],
-  "currentIndex": 3
-}
-```
+**What to look for:** The quiz resumes at question 4. Questions 1–3 are shown as already answered with the original selections pre-filled. The progress indicator reflects 3/N completed, not 0/N.
 
-**Pass criteria:** `currentIndex` persists. On re-entry, quiz starts at index 3, not 0.
+**Pass criteria:** Quiz does not restart from question 1. Confidence and mistake-type annotations from the previous session are preserved.
 
 ---
 
@@ -765,44 +668,19 @@ python router.py "Derive hmm"
 
 **Tests:** Responsible AI requirement — coaching answers are verifiable, not just plausible.
 
-**Step 1 — Upload document:**
-```bash
-curl -X POST http://localhost:3000/api/coaching/rag \
-  -F "file=@/path/to/document.pdf" \
-  -F "action=index"
-# Expected: { "status": "indexed", "chunks": N }
-```
+1. Navigate to **Coaching** (`/coaching`)
+2. Enable **PDF mode** (toggle or button in the coaching UI)
+3. Upload any PDF (e.g., a lecture note or paper on volatility, options pricing, or another quant topic)
+4. Wait for the indexing confirmation
+5. Ask a question directly about the document's content, e.g.: `"What does this document say about volatility?"`
 
-**Step 2 — Query with claim evaluation:**
-```bash
-curl -X POST http://localhost:3000/api/coaching/rag \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What does the document say about volatility?", "evaluate": true}'
-```
+**What to look for:**
+- Inline citation markers in the answer text, formatted as `[c1.0.3]` (chunk references)
+- A citations panel listing each reference with page number, paragraph, and a snippet of the source text
+- A claim evaluation section where each factual claim in the answer is labeled `"supported"`, `"partial"`, or `"unsupported"` against the actual document chunks
+- A `confidence` score between 0 and 1
 
-**Expected response:**
-```json
-{
-  "answer": "The document states that volatility is... [c1.0.3]",
-  "citations": [
-    {
-      "id": "c1.0.3",
-      "page": 1,
-      "paragraph": 3,
-      "text": "...first 100 chars of the source chunk...",
-      "bbox": [0, 120, 595, 140]
-    }
-  ],
-  "evaluation": {
-    "claims": [
-      {"claim": "volatility is...", "support": "supported", "citation": "c1.0.3"}
-    ],
-    "confidence": 0.88
-  }
-}
-```
-
-**Pass criteria:** Every inline citation `[cX.Y.Z]` has a matching entry in `citations[]`. No claim is marked `"unsupported"` when it maps to a real chunk. `confidence` is between 0 and 1.
+**Pass criteria:** Every inline citation marker maps to an entry in the citations list. No claim sourced from the document is marked `"unsupported"`. The system surfaces any hallucinated or ungrounded claim rather than hiding it.
 
 ---
 
@@ -810,34 +688,20 @@ curl -X POST http://localhost:3000/api/coaching/rag \
 
 **Tests:** ETF factor analysis runs and returns structured data with caching.
 
-```bash
-# First call — fetches from yfinance/FRED, ~10s
-curl "http://localhost:3000/api/analysis/smart-beta?tickers=USMV,MTUM"
+1. Navigate to the **Analysis** section (or the smart beta tool in the app)
+2. Enter tickers: `USMV, MTUM`
+3. Run the analysis — the first run fetches live data from yfinance and FRED (allow ~10 seconds)
+4. Note the load time, then run the same tickers again immediately
 
-# Second call — reads from Parquet cache, <1s
-curl "http://localhost:3000/api/analysis/smart-beta?tickers=USMV,MTUM"
-```
+**What to look for (first run):**
+- Factor loadings for each ticker: `alpha`, `MKT`, `SMB`, `HML` betas, and `r_squared`
+- `r_squared` values are between 0 and 1
+- Rolling 36-month beta chart visible
 
-**Expected response shape:**
-```json
-{
-  "tickers": ["USMV", "MTUM"],
-  "prices": {
-    "USMV": [{"date": "2020-01-02", "price": 100.0}, ...]
-  },
-  "factorLoadings": {
-    "USMV": {"alpha": 0.02, "MKT": 0.65, "SMB": -0.12, "HML": 0.08, "r_squared": 0.87}
-  },
-  "rollingBetas": {
-    "USMV": [{"date": "2022-12-30", "MKT": 0.63, "SMB": -0.10}]
-  },
-  "factorCorrelations": {
-    "MKT": {"SMB": 0.12, "HML": -0.05, ...}
-  }
-}
-```
+**What to look for (second run):**
+- Response returns noticeably faster (under 1 second) — Parquet cache is serving the result
 
-**Pass criteria:** Both tickers appear in response. `r_squared` values are between 0 and 1. Second call is significantly faster than first (cache is working).
+**Pass criteria:** Both tickers appear with valid factor loadings. `r_squared` is in range. The second call is significantly faster than the first.
 
 ---
 
@@ -845,28 +709,16 @@ curl "http://localhost:3000/api/analysis/smart-beta?tickers=USMV,MTUM"
 
 **Tests:** Responsible AI requirement — append-only, every run recorded, all records valid JSON.
 
-```bash
-# Run TC-04 once; count lines
-BEFORE=$(wc -l < data/responsible-ai/study-plan-tool-audit.ndjson)
+1. Open `data/responsible-ai/study-plan-tool-audit.ndjson` in a text editor — count the current number of lines
+2. Navigate to **Profile** → **Readiness** tab and generate a study plan (TC-04)
+3. Reopen the audit file
 
-# Run TC-04 again
-curl -X POST http://localhost:3000/api/profile/readiness/study-plan \
-  -H "Content-Type: application/json" \
-  -d '{"composite":60,"breakdown":[{"key":"theory","score":50,"label":"Theory Mastery"}],"recommendations":[],"hoursPerWeek":5,"targetRole":"Quant Research"}'
+**What to look for:**
+- Exactly one new line has been appended — no lines removed or modified
+- The new line is valid JSON containing `"status": "ok"` and an `"auditId"` matching the one shown in the study plan UI
+- Every line in the file is valid JSON (you can scan visually or open with a JSON formatter)
 
-AFTER=$(wc -l < data/responsible-ai/study-plan-tool-audit.ndjson)
-
-echo "New lines: $((AFTER - BEFORE))"
-# Expected: 1
-
-# Validate all records are valid JSON
-while IFS= read -r line; do
-  echo "$line" | python3 -m json.tool > /dev/null && echo "OK" || echo "INVALID LINE"
-done < data/responsible-ai/study-plan-tool-audit.ndjson
-# Expected: all lines print "OK"
-```
-
-**Pass criteria:** Exactly 1 new line per run. All lines are valid JSON. No line is ever removed or modified.
+**Pass criteria:** Line count increases by exactly 1 per plan generation. The audit file is strictly additive — it is never overwritten. Every record is parseable JSON.
 
 ---
 
@@ -874,23 +726,21 @@ done < data/responsible-ai/study-plan-tool-audit.ndjson
 
 **Tests:** Problem question 3 — composite correctly identifies weakest component across signals.
 
-**Scenario:** A learner with strong quiz scores but zero trading discipline.
-- Theory: 85 (strong resume, good quiz scores)
-- Implementation: 75 (solid interview performance)
-- Execution: 15 (no stop orders placed, one revenge-trade detected)
-- Communication: 70
+**Scenario:** A learner with strong quiz scores but poor trading discipline.
 
-```
-Composite = 0.30×85 + 0.25×75 + 0.30×15 + 0.15×70
-          = 25.5 + 18.75 + 4.5 + 10.5
-          = 59.25 ≈ 59
-```
+1. Complete a few quizzes on the **Learn** page (aiming for mostly correct answers)
+2. Complete an interview session on the **Profile → Interview** tab
+3. Navigate to the **Dashboard** (`/`)
 
-**Expected behavior:** Dashboard shows composite ≈ 59, Execution as weakest component, recommended action links to trading discipline coaching — not "Review Chapter 3."
+**What to look for:**
+- The readiness composite is broken into four visible components: Theory (30%), Implementation (25%), Execution (30%), Communication (15%)
+- If trading data is absent or discipline signals are low, the Execution component pulls the composite down significantly — even if quiz scores are high
+- The first recommendation on the dashboard targets the weakest component, not the highest-scoring one
+- Each recommendation card shows a `source` tag (e.g., `/profile/resume`, `/profile/interview`, `/trade`) so the evidence link is traceable
 
-**A quiz-only system would have returned: 85.**
+**Key point:** A quiz-only system would return the Theory score alone (potentially 85+). QLOS returns a composite that reflects actual execution readiness. The difference between the two numbers is the platform's core value.
 
-**Pass criteria:** Navigate to `/` dashboard after completing interview and trade sessions. Composite reflects all four components. Weakest component recommendation is surfaced first.
+**Pass criteria:** Composite reflects all four components with correct weights. The weakest component's recommendation appears first. Source tags are visible on every recommendation card.
 
 ---
 
@@ -935,7 +785,7 @@ The most important design tension: the mistake taxonomy is only as useful as the
 
 ### Honest limitations
 
-**No automated test suite.** All test cases in this document are manual or curl-based. There are no Jest tests, no pytest tests, no CI/CD pipeline. This is the largest gap for production readiness.
+**No automated test suite.** All test cases in this document are manual UI walkthroughs. There are no Jest tests, no pytest tests, no CI/CD pipeline. This is the largest gap for production readiness.
 
 **Readiness weights are designed, not calibrated.** The 0.30 / 0.25 / 0.30 / 0.15 weights are based on domain judgment. There is no ground-truth readiness dataset to validate them against. A future version should collect outcomes data and regress weights from actual hire/pass rates.
 
